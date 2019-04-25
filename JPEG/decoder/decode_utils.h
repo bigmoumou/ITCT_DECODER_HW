@@ -8,7 +8,20 @@ using namespace std;
 
 class Decode_process_tag {
 private:
-     std::vector<string> rawhexv {};
+    int max_w = 0;
+    int max_h = 0;
+    int mcu_y_w = 0;
+    int mcu_y_h = 0;
+    int mcu_cb_w = 0;
+    int mcu_cb_h = 0;
+    int mcu_cr_w = 0;
+    int mcu_cr_h = 0;
+    int block_w = 0;
+    int block_h = 0;
+    vector <string> rawhex {};
+    vector <int> * row_prosessor;
+    vector <int> * col_prosessor;    
+    vector <int> * tmp_prosessor;     
      // SOI
      bool is_soi {false};
      // APP0
@@ -35,12 +48,13 @@ private:
                                                  58, 59, 52, 45, 38, 31, 39, 46,
                                                  53, 60, 61, 54, 47, 55, 62, 63};
     // SOF0
+    bool is_sofo_finish = false;
     int sof0_data_p {0};
     int sof0_h {0};
     int sof0_w {0};
     int sof0_c {0};
-    vector <int> sof0_c_sampling_h {};
-    vector <int> sof0_c_sampling_v {};
+    vector <int> sof0_c_sampling_h {};  // 2, 1, 1
+    vector <int> sof0_c_sampling_v {};  // 2, 1, 1
     vector <int> sof0_c_qid {};
     // DHT
     int dht_num {0};
@@ -52,7 +66,10 @@ private:
     vector <map<string, int>> sos_c_table_use {};
     string ignorable_bytes {};
     // SCAN
-    string mcus {};
+    vector <vector <double>> * img_y;
+    vector <vector <double>> * img_cb;
+    vector <vector <double>> * img_cr;
+    string binary_data {};
     vector <int> blocks_val {};
     vector <double> idct_val {};
     vector <double> rgb_val {};
@@ -60,42 +77,35 @@ private:
     bool eoi {false};
 public:
     // Attributes
-    bool process_all_markers();
+    void decode();
     
     void soi(string & hex_tmp);
-    void get_soi_info();
     
     void app0(string & hex_tmp, int & read_in_tmp, int & read_in_total);
     
+    void com(string & hex_tmp, int & read_in_tmp, int & read_in_total);
+    
     void dqt(string & hex_tmp, int & read_in_tmp, int & read_in_total);
-    void get_dqt_info();
     
     void sof0(string & hex_tmp, int & read_in_tmp, int & read_in_total);
-    void get_sof0_info();
 
     void dht(string & hex_tmp, int & read_in_tmp, int & read_in_total);
-    void get_dht_info();
     
     void sos(string & hex_tmp, int & read_in_tmp, int & read_in_total, bool & scan_flag);
-    void get_sos_info();
-    
+
     void scan(string & hex_tmp, int & read_in_tmp, int & read_in_total, string & bin_tmp);
-    void get_eoi_info();
-    void get_scan_info();
-    void get_idct_info();
+
     
     // Utils
-    void dpcm(int cur_c, int val, bool & dc_y_init, bool & dc_cb_init, bool & dc_cr_init, 
+    void read_data(string filename);
+    void de_huffman(int & read_in_tmp, int & read_in_total);
+    void dpcm(int cur_c, int block_count, int val, bool & dc_y_init, bool & dc_cb_init, bool & dc_cr_init, 
                          int & dc_y, int & dc_cb, int & dc_cr);
     void dqt_mul(const int & q_id);
-    void d_zigzag();
-    void idct();
-    void rebuild_ycc(const int & cur_c);
+    void idct(int cur_c, int acc_val, int row_y, int col_y, int row_c, int col_c);
     void ycc2rgb();
-    
-    // Overloaded Constructors
-    Decode_process_tag();
-    Decode_process_tag(std::vector<string> rawhexv_val, bool is_soi_val, bool is_app0_val,
-                                            bool is_app0_tag_val);
+
+    void rc_pos(int cur_c, int block_count, int acc_val, int old_acc_val, int & row_y, int & col_y, int & row_c, int & col_c);  
+    void get_dqt_info();
 };
 
