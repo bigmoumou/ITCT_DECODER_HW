@@ -1,4 +1,4 @@
-# ITCT_DECODER_HW
+# ITCT_Decoder_HW
 
 # JPEG
 
