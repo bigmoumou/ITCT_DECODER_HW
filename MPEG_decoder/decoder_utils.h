@@ -3,12 +3,17 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <deque>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
 using namespace std;
+using namespace cv;
 
 class Decoder {
 private:
     // all bits string buffer for `read_data`
-    vector <uint8_t> abs_buf {};
+    deque<uint8_t> que_buf {};
+    vector<uint8_t> abs_buf {};
     bool zero_byte_flag = false;
     uint8_t zero_byte = 0;
 
@@ -81,6 +86,8 @@ private:
     vector<vector<int>> y_result_final {};
     vector<vector<int>> cb_result_final {};
     vector<vector<int>> cr_result_final {};
+    // queue for opencv video
+    deque<Mat> imageQueue;
 
     // Slices
     int slice_vertical_position = 0;
@@ -153,7 +160,7 @@ private:
     vector<vector<int>> dct_recon;
 
     // Fast IDCT
-    vector<vector <double>> idct_result;
+    vector<vector <double>> idct_table;
     // pel_past
     vector<vector<int>> pel_past_R;
     vector<vector<int>> pel_past_G;
@@ -311,7 +318,7 @@ public:
     void block(int i);
        
     // Utils
-    int sign(int num);    
+    int sign(int num);
     void load_intra_quant();
     void load_non_intra_quant();
     void print_hex(unsigned int code);
@@ -330,27 +337,35 @@ public:
     int get_mb_address_map();
     string get_mb_type_map();
     int get_dct_dc_size_lum_map();
+    int get_dct_dc_size_lum_map_s();
     int get_dct_dc_size_chr_map();
+    int get_dct_dc_size_chr_map_s();
     int get_escape_run();
     int get_escape_level();
     int get_motion_vector_map();
-    
+
     // Reconstruct I-frame
     void coded_block_pattern();
     void dct_coeff_first();
+    void dct_coeff_first_s();
     void dct_coeff_next();
+    void dct_coeff_next_s();
+    void fill_dct_zz(int run, int level);
+    void fill_dct_zz_first(int run, int level);
+
     void reconstruct_dct(int num);
     void idct();
     void recon_pic();
     void ycbcr2rgb(bool to_buffer, bool to_output);
     void output_img();
     void output_bmp();
+    void rgb2cvmat(vector<vector<int>> cv_R, vector<vector<int>> cv_G, vector<vector<int>> cv_B);
     // Reconstruct P-frame
     void cal_motion_vector_p();
     void decode_mv();
     // Reconstruct B-frame
     void cal_motion_vector_b();
-    
+
     // Overloaded Constructors
     Decoder();
 };

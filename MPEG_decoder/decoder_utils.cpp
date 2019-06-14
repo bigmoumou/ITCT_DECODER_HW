@@ -6,25 +6,29 @@
 #include "decoder_utils.h"
 #include <map>
 #include <bitset>
+#include <deque>
 #include <math.h>
 #include <algorithm>
 #define PI 3.14159265
 
-# include "easyBMP/EasyBMP.h"
+#include "easyBMP/EasyBMP.h"
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
 
 using namespace std;
+using namespace cv;
 
 // Init Decoder
 Decoder::Decoder() : dct_zz(64, 0), pattern_code(6, 0), dct_recon(8, vector<int>(8, 0)) {
     // init idct_result
-    idct_result.resize(8, vector<double> (8, 0));
+    idct_table.resize(8, vector<double> (8, 0));
     // idct_result;
     for (int i=0; i<8; i++) {
         for (int j=0; j<8; j++) {
             if (j == 0) {
-                idct_result.at(i).at(j) = cos(((2 * i + 1) * j * PI) / (16)) / sqrt(2) / 2;
+                idct_table.at(i).at(j) = cos(((2 * i + 1) * j * PI) / (16)) / sqrt(2) / 2;
             } else {
-                idct_result.at(i).at(j) = cos(((2 * i + 1) * j * PI) / (16)) / 2;
+                idct_table.at(i).at(j) = cos(((2 * i + 1) * j * PI) / (16)) / 2;
             }
         }
     }
@@ -44,7 +48,6 @@ Decoder::Decoder() : dct_zz(64, 0), pattern_code(6, 0), dct_recon(8, vector<int>
     pel_tmp_B = vector<vector<int>>(240, vector<int>(320, 0));
 }
 
-
 // Main functions
 void Decoder::read_data(string filename) {
     ifstream f (filename, ios::binary);
@@ -52,7 +55,6 @@ void Decoder::read_data(string filename) {
         cout << "File not found !" << endl;
         exit(1);
     }
-    // vector <uint8_t> s_buf {istreambuf_iterator<char>{f}, {}};
     abs_buf = {istreambuf_iterator<char>{f}, {}};
 }
 
@@ -87,18 +89,19 @@ void Decoder::sequence_header() {
     load_non_intra_quantizer_matrix = read_bits(1);   
     mb_width = h_size / 16;
     mb_height = v_size / 16;
+
     // debug
-    print_hex(seq_h_code);
-    print_hex(h_size);
-    print_hex(v_size);
-    print_hex(p_a_r);
-    print_hex(p_r);
-    print_hex(b_r);
-    print_hex(m_b);
-    print_hex(vbv_buffer_size);
-    print_hex(constrained_parameter_flag);
-    print_hex(load_intra_quantizer_matrix);
-    print_hex(load_non_intra_quantizer_matrix);
+//    print_hex(seq_h_code);
+//    print_hex(h_size);
+//    print_hex(v_size);
+//    print_hex(p_a_r);
+//    print_hex(p_r);
+//    print_hex(b_r);
+//    print_hex(m_b);
+//    print_hex(vbv_buffer_size);
+//    print_hex(constrained_parameter_flag);
+//    print_hex(load_intra_quantizer_matrix);
+//    print_hex(load_non_intra_quantizer_matrix);
     
     if ( load_intra_quantizer_matrix ) {
         load_intra_quant();
@@ -117,10 +120,10 @@ void Decoder::group_of_pictures() {
     broken_link = read_bits(1);
     
     // debug
-    print_hex(gop_start_code);
-    print_hex(time_code);
-    print_hex(closed_gop);
-    print_hex(broken_link);
+//    print_hex(gop_start_code);
+//    print_hex(time_code);
+//    print_hex(closed_gop);
+//    print_hex(broken_link);
     
     next_start_code();
     
@@ -145,16 +148,16 @@ void Decoder::picture() {
     vbv_delay = read_bits(16);
 
     // debug
-    cout << "==PICTURE_START_CODE(";
-    cout << dec << pic_num;
-    cout << ")== -> ";
-    print_hex(picture_start_code);
-    cout << "    temporal_reference: ";
-    print_hex(temporal_reference);
-    cout << "    picture_coding_type: ";
-    print_hex(picture_coding_type);
-    cout << "    vbv_delay: ";
-    print_dec(vbv_delay);
+//    cout << "==PICTURE_START_CODE(";
+//    cout << dec << pic_num;
+//    cout << ")== -> ";
+//    print_hex(picture_start_code);
+//    cout << "    temporal_reference: ";
+//    print_hex(temporal_reference);
+//    cout << "    picture_coding_type: ";
+//    print_hex(picture_coding_type);
+//    cout << "    vbv_delay: ";
+//    print_dec(vbv_delay);
 
     if (picture_coding_type == 2 || picture_coding_type == 3) {
         full_pel_forward_vector = read_bits(1);
@@ -163,10 +166,10 @@ void Decoder::picture() {
         forward_r_size = forward_f_code - 1;
         forward_f = 1 << forward_r_size;
         // debug
-        cout << "    full_pel_forward_vector: ";
-        print_dec(full_pel_forward_vector);
-        cout << "    forward_f_code: ";
-        print_dec(forward_f_code);
+//        cout << "    full_pel_forward_vector: ";
+//        print_dec(full_pel_forward_vector);
+//        cout << "    forward_f_code: ";
+//        print_dec(forward_f_code);
     }
     if (picture_coding_type == 3) {
         full_pel_backward_vector = read_bits(1);
@@ -182,8 +185,8 @@ void Decoder::picture() {
     extra_bit_picture = read_bits(1);
     
     // debug
-    cout << "    extra_bit_picture: ";
-    print_hex(extra_bit_picture);    
+//    cout << "    extra_bit_picture: ";
+//    print_hex(extra_bit_picture);    
     
     if (picture_coding_type != 3) {
         pel_future_R = pel_past_R;
@@ -197,8 +200,6 @@ void Decoder::picture() {
         // Slice start code '00000101' to '000001AF'
         do {
             slice();
-//            cout << "slice_vertical_position : ";
-//            cout << slice_vertical_position << endl;
         } while (is_next_slice_code());
     }
     // Reconstruct I-frame
@@ -210,18 +211,21 @@ void Decoder::picture() {
         recon_pic();
         ycbcr2rgb(true, false);  // to_pel_past, to_output
         if (pic_num > 1) {
-            img_queue.push_back(pel_future_R);
-            img_queue.push_back(pel_future_G);
-            img_queue.push_back(pel_future_B);
+//            img_queue.push_back(pel_future_R);
+//            img_queue.push_back(pel_future_G);
+//            img_queue.push_back(pel_future_B);
+            // push to buffer
+            rgb2cvmat(pel_future_R, pel_future_G, pel_future_B);        
         }
     }
-    if (img_queue.size() > 0) {
-        output_img();
+//    if (img_queue.size() > 0) {
+//        output_img();
+//    }
+    if (imageQueue.size() > 0) {
+        imshow("test", imageQueue.at(0));
+        imageQueue.pop_front();
+        waitKey(30);
     }
-    cout << "img_queue.size() : " << img_queue.size() << endl;
-
-//    recon_pic();
-//    output_bmp();
 }
 
 void Decoder::slice() {
@@ -245,17 +249,17 @@ void Decoder::slice() {
     uint8_t nbs = nextbits(1);
     if (nbs == 0x1) {
         // debug
-        cout << "[ TODO ] : extra_bit_slice & extra_information_slice ..." << endl;
+//        cout << "[ TODO ] : extra_bit_slice & extra_information_slice ..." << endl;
     }
     extra_bit_slice = read_bits(1);
 
     // debug
-    cout << "==SLICE_START_CODE== -> ";    
-    print_hex(slice_start_code);
-    cout << "    quantizer_scale: ";
-    print_hex(quantizer_scale);
-    cout << "    extra_bit_slice: ";
-    print_hex(extra_bit_slice);
+//    cout << "==SLICE_START_CODE== -> ";    
+//    print_hex(slice_start_code);
+//    cout << "    quantizer_scale: ";
+//    print_hex(quantizer_scale);
+//    cout << "    extra_bit_slice: ";
+//    print_hex(extra_bit_slice);
 
     // macroblock();
     do {
@@ -292,7 +296,7 @@ void Decoder::macroblock() {
         if (mb_inc == 101) {
             // mb_address_increment = 33;
             inc_acc += 33;
-            cout << "          macroblcok_escape" << endl;
+//            cout << "          macroblcok_escape" << endl;
         } else {
             // mb_address_increment = mb_inc;
             inc_acc += mb_inc;
@@ -336,23 +340,23 @@ void Decoder::macroblock() {
     mb_intra = mb_type.substr(4, 1);
 
     // debug
-    cout << "    ==MACROBLOCK(";
-    cout << dec << (mb_address + 1);
-    cout << ")==" << endl;
-    cout << "        macroblock_address_increment: ";
-    cout << mb_address_increment << endl;
-    cout << "        macroblock_type: ";
-    cout << stoi(mb_type, nullptr, 2) << endl;
-    cout << "            macroblcok_quant: ";
-    cout << mb_quant << endl;
-    cout << "            macroblcok_motion_forward: ";
-    cout << mb_motion_forward << endl;
-    cout << "            macroblcok_motion_backward: ";    
-    cout << mb_motion_backward << endl;
-    cout << "            macroblcok_pattern: ";
-    cout << mb_pattern << endl;
-    cout << "            macroblcok_intra: ";    
-    cout << mb_intra << endl;
+//    cout << "    ==MACROBLOCK(";
+//    cout << dec << (mb_address + 1);
+//    cout << ")==" << endl;
+//    cout << "        macroblock_address_increment: ";
+//    cout << mb_address_increment << endl;
+//    cout << "        macroblock_type: ";
+//    cout << stoi(mb_type, nullptr, 2) << endl;
+//    cout << "            macroblcok_quant: ";
+//    cout << mb_quant << endl;
+//    cout << "            macroblcok_motion_forward: ";
+//    cout << mb_motion_forward << endl;
+//    cout << "            macroblcok_motion_backward: ";    
+//    cout << mb_motion_backward << endl;
+//    cout << "            macroblcok_pattern: ";
+//    cout << mb_pattern << endl;
+//    cout << "            macroblcok_intra: ";    
+//    cout << mb_intra << endl;
 
     // init recon_right_for & recon_down_for for B-frame
     if ((picture_coding_type == 3) && (mb_intra == "1")) {
@@ -369,31 +373,31 @@ void Decoder::macroblock() {
     if (mb_quant == "1") {
         quantizer_scale = read_bits(5);
         // debug
-        cout << "        quantier_scale: ";
-        print_dec(quantizer_scale);
+//        cout << "        quantier_scale: ";
+//        print_dec(quantizer_scale);
     }
     if (mb_motion_forward == "1") {
         // horizontal
         motion_horizontal_forward_code = get_motion_vector_map();
         // debug
-        cout << "        motion_horizontal_forward_code: ";
-        cout << motion_horizontal_forward_code << endl;
+//        cout << "        motion_horizontal_forward_code: ";
+//        cout << motion_horizontal_forward_code << endl;
         if (((forward_f) != 1) && (motion_horizontal_forward_code != 0)) {
             motion_horizontal_forward_r = read_bits(forward_r_size);
             // debug
-            cout << "        motion_horizontal_forward_r: ";
-            print_dec(motion_horizontal_forward_r);
+//            cout << "        motion_horizontal_forward_r: ";
+//            print_dec(motion_horizontal_forward_r);
         }
         // vertical
         motion_vertical_forward_code = get_motion_vector_map();
         // debug
-        cout << "        motion_vertical_forward_code: ";
-        cout << motion_vertical_forward_code << endl;
+//        cout << "        motion_vertical_forward_code: ";
+//        cout << motion_vertical_forward_code << endl;
         if (((forward_f) != 1) && (motion_vertical_forward_code != 0)) {
             motion_vertical_forward_r = read_bits(forward_r_size);
             // debug
-            cout << "        motion_vertical_forward_r: ";
-            print_dec(motion_vertical_forward_r);
+//            cout << "        motion_vertical_forward_r: ";
+//            print_dec(motion_vertical_forward_r);
         }
         // motion vectors
         cal_motion_vector_p();    
@@ -412,24 +416,24 @@ void Decoder::macroblock() {
         // horizontal
         motion_horizontal_backward_code = get_motion_vector_map();
         // debug
-        cout << "        motion_horizontal_backward_code: ";
-        cout << motion_horizontal_backward_code << endl;        
+//        cout << "        motion_horizontal_backward_code: ";
+//        cout << motion_horizontal_backward_code << endl;        
         if (((backward_f) != 1) && (motion_horizontal_backward_code != 0)) {
             motion_horizontal_backward_r = read_bits(backward_r_size);
             // debug
-            cout << "        motion_horizontal_backward_r: ";
-            print_dec(motion_horizontal_backward_r);
+//            cout << "        motion_horizontal_backward_r: ";
+//            print_dec(motion_horizontal_backward_r);
         }
         // vertical
         motion_vertical_backward_code = get_motion_vector_map();
         // debug
-        cout << "        motion_vertical_backward_code: ";
-        cout << motion_vertical_backward_code << endl;        
+//        cout << "        motion_vertical_backward_code: ";
+//        cout << motion_vertical_backward_code << endl;        
         if (((backward_f) != 1) && (motion_vertical_backward_code != 0)) {
             motion_vertical_backward_r = read_bits(backward_r_size);
             // debug
-            cout << "        motion_vertical_backward_r: ";
-            print_dec(motion_vertical_backward_r);
+//            cout << "        motion_vertical_backward_r: ";
+//            print_dec(motion_vertical_backward_r);
         }
         // motion vectors
         cal_motion_vector_b();
@@ -437,13 +441,11 @@ void Decoder::macroblock() {
 
     // init dct dc past
     if (mb_intra == "0") {
-  
         decode_mv();
-
         // debug
-        cout << "        ForMV(";
-        cout << recon_right_for << ",";
-        cout << recon_down_for << ")" << endl;   
+//        cout << "        ForMV(";
+//        cout << recon_right_for << ",";
+//        cout << recon_down_for << ")" << endl;   
     } else {
         for (int i=0; i<16; i++) {
             for (int j=0; j<16; j++) {
@@ -453,13 +455,12 @@ void Decoder::macroblock() {
             }
         }
     }
-
     // update cbp
     if (mb_pattern == "1") {
         coded_block_pattern();
     }
     update_pattern_code(pattern_code);
-
+    // blocks loop
     for (int i=0; i<6; i++) {
         block(i);
     }
@@ -482,10 +483,11 @@ void Decoder::block(int i) {
     // main loop
     if (pattern_code[i] == 1) {
         // debug
-        cout << "        ==BLOCK(" << i << ")==" << endl;
+        // cout << "        ==BLOCK(" << i << ")==" << endl;
         if (mb_intra == "1") {
             if (i<4) {
-                dct_dc_size_luminance = get_dct_dc_size_lum_map();
+                // dct_dc_size_luminance = get_dct_dc_size_lum_map();
+                dct_dc_size_luminance = get_dct_dc_size_lum_map_s();
                 if(dct_dc_size_luminance != 0) {
                     dct_dc_differential = read_bits(dct_dc_size_luminance);   
                     if (dct_dc_differential & (1 << (dct_dc_size_luminance-1))) {
@@ -494,19 +496,19 @@ void Decoder::block(int i) {
                         dct_zz.at(0) = (-1 << (dct_dc_size_luminance)) | (dct_dc_differential+1);
                     }
                     // debug
-                    cout << "            dct_dc_size_luminance: ";
-                    cout << dct_dc_size_luminance << endl;
-                    cout << "            dct_dc_differential_luminance: ";
-                    print_dec(dct_dc_differential);
+                    // cout << "            dct_dc_size_luminance: ";
+                    // cout << dct_dc_size_luminance << endl;
+                    // cout << "            dct_dc_differential_luminance: ";
+                    // print_dec(dct_dc_differential);
                 } else {
-                    // dct_dc_size == 0
                     dct_zz.at(0) = 0;
                     // debug
-                    cout << "            dct_dc_size_luminance: ";
-                    cout << dct_dc_size_luminance << endl;                    
+                    // cout << "            dct_dc_size_luminance: ";
+                    // cout << dct_dc_size_luminance << endl;                    
                 }
             } else {
                 dct_dc_size_chrominance = get_dct_dc_size_chr_map();
+                // dct_dc_size_chrominance = get_dct_dc_size_chr_map_s();
                 if(dct_dc_size_chrominance !=0) {
                     dct_dc_differential = read_bits(dct_dc_size_chrominance);
                     if (dct_dc_differential & (1 << (dct_dc_size_chrominance-1))) {
@@ -515,20 +517,20 @@ void Decoder::block(int i) {
                         dct_zz.at(0) = (-1 << (dct_dc_size_chrominance)) | (dct_dc_differential+1) ;
                     }
                     // debug
-                    cout << "            dct_dc_size_chrominance: ";
-                    cout << dct_dc_size_chrominance << endl;
-                    cout << "            dct_dc_differential_luminance: ";     
-                    print_dec(dct_dc_differential);
-
+                    // cout << "            dct_dc_size_chrominance: ";
+                    // cout << dct_dc_size_chrominance << endl;
+                    // cout << "            dct_dc_differential_luminance: ";     
+                    // print_dec(dct_dc_differential);
                 } else {
                     dct_zz.at(0) = 0;
                     // debug
-                    cout << "            dct_dc_size_chrominance: ";
-                    cout << dct_dc_size_chrominance << endl;          
+                    // cout << "            dct_dc_size_chrominance: ";
+                    // cout << dct_dc_size_chrominance << endl;          
                 }
             }
         } else {
-            dct_coeff_first();
+            // dct_coeff_first();
+            dct_coeff_first_s();
         }
         if (picture_coding_type != 4) {
             // If mb_intra == 1 then i shall be set to zero before the first dct_coeff_next. 
@@ -536,12 +538,13 @@ void Decoder::block(int i) {
                 dct_zz_i = 0;
             }
             while (nextbits(2) != 2) {
-                dct_coeff_next();
+                // dct_coeff_next();
+                dct_coeff_next_s();
             }
             end_of_block = read_bits(2);
             // debug
             if (end_of_block == 2) {
-                cout << "            EOB" << endl;
+                // cout << "            EOB" << endl;
             }
             // Reconstruct dct_recon
             reconstruct_dct(i);
@@ -808,8 +811,8 @@ void Decoder::update_pattern_code(vector<int> & pattern_code) {
                 _tmp = (_tmp << 1) + 1;
             }
         }
-        cout << "        coded_block_pattern: ";
-        print_dec(_tmp);
+//        cout << "        coded_block_pattern: ";
+//        print_dec(_tmp);
     }
 }
 
@@ -905,6 +908,56 @@ int Decoder::get_dct_dc_size_lum_map() {
     }
 }
 
+int Decoder::get_dct_dc_size_lum_map_s() {
+    uint16_t nbs16 = 0;
+    uint8_t second_nbs8 = 0;
+    for (int i=2; i<8; i++) {
+        second_nbs8 = nextbits(i);
+        nbs16 = i;
+        nbs16 = (nbs16 << 8) + second_nbs8;    
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs16) {
+            case 0x200:
+                _ = read_bits(i);
+                i = 8;
+                return 1;
+            case 0x201:
+                _ = read_bits(i);
+                i = 8;
+                return 2;
+            case 0x304:
+                _ = read_bits(i);
+                i = 8;
+                return 0;
+            case 0x305:
+                _ = read_bits(i);
+                i = 8;
+                return 3;
+            case 0x306:
+                _ = read_bits(i);
+                i = 8;
+                return 4;
+            case 0x40e:
+                _ = read_bits(i);
+                i = 8;
+                return 5;
+            case 0x51e:
+                _ = read_bits(i);
+                i = 8;
+                return 6;
+            case 0x63e:
+                _ = read_bits(i);
+                i = 8;
+                return 7;
+            case 0x77e:
+                _ = read_bits(i);
+                i = 8;
+                return 8;
+        }
+    }
+}
+
 int Decoder::get_dct_dc_size_chr_map() {
     // debug
 //    cout << "            [ Info ] : in `get_dct_dc_size_chr_map()` function ..." << endl;
@@ -923,6 +976,56 @@ int Decoder::get_dct_dc_size_chr_map() {
 //            cout << iter->second << endl;
             uint8_t _ = read_bits(i);
             return iter->second;
+        }
+    }
+}
+
+int Decoder::get_dct_dc_size_chr_map_s() {
+    uint16_t nbs16 = 0;
+    uint8_t second_nbs8 = 0;
+    for (int i=2; i<8; i++) {
+        second_nbs8 = nextbits(i);
+        nbs16 = i;
+        nbs16 = (nbs16 << 8) + second_nbs8;    
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs16) {
+            case 0x200:
+                _ = read_bits(i);
+                i = 8;
+                return 0;
+            case 0x201:
+                _ = read_bits(i);
+                i = 8;
+                return 1;
+            case 0x202:
+                _ = read_bits(i);
+                i = 8;
+                return 2;
+            case 0x306:
+                _ = read_bits(i);
+                i = 8;
+                return 3;
+            case 0x40e:
+                _ = read_bits(i);
+                i = 8;
+                return 4;
+            case 0x51e:
+                _ = read_bits(i);
+                i = 8;
+                return 5;
+            case 0x63e:
+                _ = read_bits(i);
+                i = 8;
+                return 6;
+            case 0x77e:
+                _ = read_bits(i);
+                i = 8;
+                return 7;
+            case 0x8fe:
+                _ = read_bits(i);
+                i = 8;
+                return 8;
         }
     }
 }
@@ -968,22 +1071,22 @@ void Decoder::dct_coeff_first() {
     int level = 0;
     // Get run and level from mapping
     // debug
-//    cout << "            [ Info ] : in `dct_coeff_first()` function ..." << endl;    
+    cout << "            [ Info ] : in `dct_coeff_first()` function ..." << endl;    
     uint32_t nbs28 = nextbits(28);
     for (int i=1; i<29; i++) {
         string s = bitset<28>(nbs28).to_string();
         s = s.substr(0, i);
         // debug
-//        cout << "                --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
+        cout << "                --> searching i = " << i;
+        cout << " (string : " << s << ")" << endl;
         map<string, vector<int>>::iterator iter;
         iter = dct_coeff_first_map.find(s);
         if (iter !=dct_coeff_first_map.end()) {
             // debug
-//            cout << "                    --> get run : ";
-//            cout << iter->second.at(0) << endl;
-//            cout << "                    --> get level : ";
-//            cout << iter->second.at(1) << endl;
+            cout << "                    --> get run : ";
+            cout << iter->second.at(0) << endl;
+            cout << "                    --> get level : ";
+            cout << iter->second.at(1) << endl;
             uint8_t _ = read_bits(i);
             run = iter->second.at(0);
             level = iter->second.at(1);
@@ -1009,9 +1112,9 @@ void Decoder::dct_coeff_first() {
                     cout << dec << neg_level << endl;
                 }
                 // debug
-//                cout << "                    --> get s : ";
+                cout << "                    --> get s : ";
 //                print_hex(s);            
-                break; 
+                break;
             } else {
                 // escape case
                 run = get_escape_run();
@@ -1028,27 +1131,621 @@ void Decoder::dct_coeff_first() {
     }    
 }
 
+void Decoder::dct_coeff_first_s() {
+    uint64_t nbs64 = 0;
+    uint32_t second_nbs32 = 0;
+    for (int i=1; i<29; i++) {
+        second_nbs32 = nextbits(i);
+        nbs64 = i;
+        nbs64 = (nbs64 << 32) + second_nbs32;
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs64) {
+            case 0x1000000010:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 18);
+                i = 29;
+                break;
+            case 0x1000000011:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 17);
+                i = 29;
+                break;
+            case 0x1000000012:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 16);
+                i = 29;
+                break;
+            case 0x1000000013:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 15);
+                i = 29;
+                break;
+            case 0x1000000014:
+                _ = read_bits(i);
+                fill_dct_zz_first(6, 3);
+                i = 29;
+                break;
+            case 0x1000000015:
+                _ = read_bits(i);
+                fill_dct_zz_first(16, 2);
+                i = 29;
+                break;
+            case 0x1000000016:
+                _ = read_bits(i);
+                fill_dct_zz_first(15, 2);
+                i = 29;
+                break;
+            case 0x1000000017:
+                _ = read_bits(i);
+                fill_dct_zz_first(14, 2);
+                i = 29;
+                break;
+            case 0x1000000018:
+                _ = read_bits(i);
+                fill_dct_zz_first(13, 2);
+                i = 29;
+                break;
+            case 0x1000000019:
+                _ = read_bits(i);
+                fill_dct_zz_first(12, 2);
+                i = 29;
+                break;
+            case 0x100000001a:
+                _ = read_bits(i);
+                fill_dct_zz_first(11, 2);
+                i = 29;
+                break;
+            case 0x100000001b:
+                _ = read_bits(i);
+                fill_dct_zz_first(31, 1);
+                i = 29;
+                break;
+            case 0x100000001c:
+                _ = read_bits(i);
+                fill_dct_zz_first(30, 1);
+                i = 29;
+                break;
+            case 0x100000001d:
+                _ = read_bits(i);
+                fill_dct_zz_first(29, 1);
+                i = 29;
+                break;
+            case 0x100000001e:
+                _ = read_bits(i);
+                fill_dct_zz_first(28, 1);
+                i = 29;
+                break;
+            case 0x100000001f:
+                _ = read_bits(i);
+                fill_dct_zz_first(27, 1);
+                i = 29;
+                break;
+            case 0xf00000010:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 40);
+                i = 29;
+                break;
+            case 0xf00000011:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 39);
+                i = 29;
+                break;
+            case 0xf00000012:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 38);
+                i = 29;
+                break;
+            case 0xf00000013:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 37);
+                i = 29;
+                break;
+            case 0xf00000014:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 36);
+                i = 29;
+                break;
+            case 0xf00000015:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 35);
+                i = 29;
+                break;
+            case 0xf00000016:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 34);
+                i = 29;
+                break;
+            case 0xf00000017:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 33);
+                i = 29;
+                break;
+            case 0xf00000018:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 32);
+                i = 29;
+                break;
+            case 0xf00000019:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 14);
+                i = 29;
+                break;
+            case 0xf0000001a:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 13);
+                i = 29;
+                break;
+            case 0xf0000001b:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 12);
+                i = 29;
+                break;
+            case 0xf0000001c:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 11);
+                i = 29;
+                break;
+            case 0xf0000001d:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 10);
+                i = 29;
+                break;
+            case 0xf0000001e:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 9);
+                i = 29;
+                break;
+            case 0xf0000001f:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 8);
+                i = 29;
+                break;
+            case 0xe00000010:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 31);
+                i = 29;
+                break;
+            case 0xe00000011:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 30);
+                i = 29;
+                break;
+            case 0xe00000012:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 29);
+                i = 29;
+                break;
+            case 0xe00000013:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 28);
+                i = 29;
+                break;
+            case 0xe00000014:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 27);
+                i = 29;
+                break;
+            case 0xe00000015:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 26);
+                i = 29;
+                break;
+            case 0xe00000016:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 25);
+                i = 29;
+                break;
+            case 0xe00000017:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 24);
+                i = 29;
+                break;
+            case 0xe00000018:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 23);
+                i = 29;
+                break;
+            case 0xe00000019:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 22);
+                i = 29;
+                break;
+            case 0xe0000001a:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 21);
+                i = 29;
+                break;
+            case 0xe0000001b:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 20);
+                i = 29;
+                break;
+            case 0xe0000001c:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 19);
+                i = 29;
+                break;
+            case 0xe0000001d:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 18);
+                i = 29;
+                break;
+            case 0xe0000001e:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 17);
+                i = 29;
+                break;
+            case 0xe0000001f:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 16);
+                i = 29;
+                break;
+            case 0xd00000010:
+                _ = read_bits(i);
+                fill_dct_zz_first(10, 2);
+                i = 29;
+                break;
+            case 0xd00000011:
+                _ = read_bits(i);
+                fill_dct_zz_first(9, 2);
+                i = 29;
+                break;
+            case 0xd00000012:
+                _ = read_bits(i);
+                fill_dct_zz_first(5, 3);
+                i = 29;
+                break;
+            case 0xd00000013:
+                _ = read_bits(i);
+                fill_dct_zz_first(3, 4);
+                i = 29;
+                break;
+            case 0xd00000014:
+                _ = read_bits(i);
+                fill_dct_zz_first(2, 5);
+                i = 29;
+                break;
+            case 0xd00000015:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 7);
+                i = 29;
+                break;
+            case 0xd00000016:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 6);
+                i = 29;
+                break;
+            case 0xd00000017:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 15);
+                i = 29;
+                break;
+            case 0xd00000018:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 14);
+                i = 29;
+                break;
+            case 0xd00000019:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 13);
+                i = 29;
+                break;
+            case 0xd0000001a:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 12);
+                i = 29;
+                break;
+            case 0xd0000001b:
+                _ = read_bits(i);
+                fill_dct_zz_first(26, 1);
+                i = 29;
+                break;
+            case 0xd0000001c:
+                _ = read_bits(i);
+                fill_dct_zz_first(25, 1);
+                i = 29;
+                break;
+            case 0xd0000001d:
+                _ = read_bits(i);
+                fill_dct_zz_first(24, 1);
+                i = 29;
+                break;
+            case 0xd0000001e:
+                _ = read_bits(i);
+                fill_dct_zz_first(23, 1);
+                i = 29;
+                break;
+            case 0xd0000001f:
+                _ = read_bits(i);
+                fill_dct_zz_first(22, 1);
+                i = 29;
+                break;
+            case 0xc00000010:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 11);
+                i = 29;
+                break;
+            case 0xc00000011:
+                _ = read_bits(i);
+                fill_dct_zz_first(8, 2);
+                i = 29;
+                break;
+            case 0xc00000012:
+                _ = read_bits(i);
+                fill_dct_zz_first(4, 3);
+                i = 29;
+                break;
+            case 0xc00000013:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 10);
+                i = 29;
+                break;
+            case 0xc00000014:
+                _ = read_bits(i);
+                fill_dct_zz_first(2, 4);
+                i = 29;
+                break;
+            case 0xc00000015:
+                _ = read_bits(i);
+                fill_dct_zz_first(7, 2);
+                i = 29;
+                break;
+            case 0xc00000016:
+                _ = read_bits(i);
+                fill_dct_zz_first(21, 1);
+                i = 29;
+                break;
+            case 0xc00000017:
+                _ = read_bits(i);
+                fill_dct_zz_first(20, 1);
+                i = 29;
+                break;
+            case 0xc00000018:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 9);
+                i = 29;
+                break;
+            case 0xc00000019:
+                _ = read_bits(i);
+                fill_dct_zz_first(19, 1);
+                i = 29;
+                break;
+            case 0xc0000001a:
+                _ = read_bits(i);
+                fill_dct_zz_first(18, 1);
+                i = 29;
+                break;
+            case 0xc0000001b:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 5);
+                i = 29;
+                break;
+            case 0xc0000001c:
+                _ = read_bits(i);
+                fill_dct_zz_first(3, 3);
+                i = 29;
+                break;
+            case 0xc0000001d:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 8);
+                i = 29;
+                break;
+            case 0xc0000001e:
+                _ = read_bits(i);
+                fill_dct_zz_first(6, 2);
+                i = 29;
+                break;
+            case 0xc0000001f:
+                _ = read_bits(i);
+                fill_dct_zz_first(17, 1);
+                i = 29;
+                break;
+            case 0xa00000008:
+                _ = read_bits(i);
+                fill_dct_zz_first(16, 1);
+                i = 29;
+                break;
+            case 0xa00000009:
+                _ = read_bits(i);
+                fill_dct_zz_first(5, 2);
+                i = 29;
+                break;
+            case 0xa0000000a:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 7);
+                i = 29;
+                break;
+            case 0xa0000000b:
+                _ = read_bits(i);
+                fill_dct_zz_first(2, 3);
+                i = 29;
+                break;
+            case 0xa0000000c:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 4);
+                i = 29;
+                break;
+            case 0xa0000000d:
+                _ = read_bits(i);
+                fill_dct_zz_first(15, 1);
+                i = 29;
+                break;
+            case 0xa0000000e:
+                _ = read_bits(i);
+                fill_dct_zz_first(14, 1);
+                i = 29;
+                break;
+            case 0xa0000000f:
+                _ = read_bits(i);
+                fill_dct_zz_first(4, 2);
+                i = 29;
+                break;
+            case 0x600000001:
+                _ = read_bits(i);
+                fill_dct_zz_first(-1, -1);
+                i = 29;
+                break;
+            case 0x700000004:
+                _ = read_bits(i);
+                fill_dct_zz_first(2, 2);
+                i = 29;
+                break;
+            case 0x700000005:
+                _ = read_bits(i);
+                fill_dct_zz_first(9, 1);
+                i = 29;
+                break;
+            case 0x700000006:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 4);
+                i = 29;
+                break;
+            case 0x700000007:
+                _ = read_bits(i);
+                fill_dct_zz_first(8, 1);
+                i = 29;
+                break;
+            case 0x600000004:
+                _ = read_bits(i);
+                fill_dct_zz_first(7, 1);
+                i = 29;
+                break;
+            case 0x600000005:
+                _ = read_bits(i);
+                fill_dct_zz_first(6, 1);
+                i = 29;
+                break;
+            case 0x600000006:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 2);
+                i = 29;
+                break;
+            case 0x600000007:
+                _ = read_bits(i);
+                fill_dct_zz_first(5, 1);
+                i = 29;
+                break;
+            case 0x800000020:
+                _ = read_bits(i);
+                fill_dct_zz_first(13, 1);
+                i = 29;
+                break;
+            case 0x800000021:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 6);
+                i = 29;
+                break;
+            case 0x800000022:
+                _ = read_bits(i);
+                fill_dct_zz_first(12, 1);
+                i = 29;
+                break;
+            case 0x800000023:
+                _ = read_bits(i);
+                fill_dct_zz_first(11, 1);
+                i = 29;
+                break;
+            case 0x800000024:
+                _ = read_bits(i);
+                fill_dct_zz_first(3, 2);
+                i = 29;
+                break;
+            case 0x800000025:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 3);
+                i = 29;
+                break;
+            case 0x800000026:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 5);
+                i = 29;
+                break;
+            case 0x800000027:
+                _ = read_bits(i);
+                fill_dct_zz_first(10, 1);
+                i = 29;
+                break;
+            case 0x500000005:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 3);
+                i = 29;
+                break;
+            case 0x500000006:
+                _ = read_bits(i);
+                fill_dct_zz_first(4, 1);
+                i = 29;
+                break;
+            case 0x500000007:
+                _ = read_bits(i);
+                fill_dct_zz_first(3, 1);
+                i = 29;
+                break;
+            case 0x400000004:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 2);
+                i = 29;
+                break;
+            case 0x400000005:
+                _ = read_bits(i);
+                fill_dct_zz_first(2, 1);
+                i = 29;
+                break;
+            case 0x300000003:
+                _ = read_bits(i);
+                fill_dct_zz_first(1, 1);
+                i = 29;
+                break;
+            case 0x100000001:
+                _ = read_bits(i);
+                fill_dct_zz_first(0, 1);
+                i = 29;
+                break;
+        }
+    }
+}
+
+void Decoder::fill_dct_zz_first(int run, int level) {
+    // normal case
+    if (run != -1) {
+        dct_zz_i = run;
+        int s = read_bits(1);
+        if (s == 0) {
+            dct_zz.at(dct_zz_i) = level;
+        } else if (s == 1) {
+            int neg_level = - level;
+            dct_zz.at(dct_zz_i) = neg_level;
+        }
+    } else {
+        // escape case
+        run = get_escape_run();
+        level = get_escape_level();
+        dct_zz_i = run;
+        dct_zz.at(dct_zz_i) = level;
+    }
+}
+
 void Decoder::dct_coeff_next() {
     int run = 0;
     int level = 0;
     // Get run and level from mapping
     // debug
-//    cout << "            [ Info ] : in `dct_coeff_next()` function ..." << endl;    
-    uint32_t nbs28 = nextbits(28);
-    for (int i=2; i<29; i++) {
+    cout << "            [ Info ] : in `dct_coeff_next()` function ..." << endl;    
+    uint32_t nbs28 = nextbits(28);  // 28
+    for (int i=2; i<29; i++) {  // 29
         string s = bitset<28>(nbs28).to_string();
         s = s.substr(0, i);
         // debug
-//        cout << "                --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
+        cout << "                --> searching i = " << i;
+        cout << " (string : " << s << ")" << endl;
         map<string, vector<int>>::iterator iter;
         iter = dct_coeff_next_map.find(s);
         if (iter !=dct_coeff_next_map.end()) {
             // debug
-//            cout << "                    --> get run : ";
-//            cout << dec << iter->second.at(0) << endl;
-//            cout << "                    --> get level : ";
-//            cout << dec << iter->second.at(1) << endl;
+            cout << "                    --> get run : ";
+            cout << dec << iter->second.at(0) << endl;
+            cout << "                    --> get level : ";
+            cout << dec << iter->second.at(1) << endl;
             uint8_t _ = read_bits(i);
             run = iter->second.at(0);
             level = iter->second.at(1);
@@ -1074,8 +1771,8 @@ void Decoder::dct_coeff_next() {
                     cout << dec << neg_level << endl;
                 }
                 // debug
-//                cout << "                    --> get s : ";
-//                print_hex(s);            
+                cout << "                    --> get s : ";
+                print_hex(s);            
                 break; 
             } else {
                 // escape case
@@ -1091,6 +1788,607 @@ void Decoder::dct_coeff_next() {
             }
         }
     }
+}
+
+void Decoder::dct_coeff_next_s() {
+    uint64_t nbs64 = 0;
+    uint32_t second_nbs32 = 0;
+    for (int i=2; i<29; i++) {
+        second_nbs32 = nextbits(i);
+        nbs64 = i;
+        nbs64 = (nbs64 << 32) + second_nbs32;
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs64) {
+            case 0x1000000010:
+                _ = read_bits(i);
+                fill_dct_zz(1, 18);
+                i = 29;
+                break;
+            case 0x1000000011:
+                _ = read_bits(i);
+                fill_dct_zz(1, 17);
+                i = 29;
+                break;
+            case 0x1000000012:
+                _ = read_bits(i);
+                fill_dct_zz(1, 16);
+                i = 29;
+                break;
+            case 0x1000000013:
+                _ = read_bits(i);
+                fill_dct_zz(1, 15);
+                i = 29;
+                break;
+            case 0x1000000014:
+                _ = read_bits(i);
+                fill_dct_zz(6, 3);
+                i = 29;
+                break;
+            case 0x1000000015:
+                _ = read_bits(i);
+                fill_dct_zz(16, 2);
+                i = 29;
+                break;
+            case 0x1000000016:
+                _ = read_bits(i);
+                fill_dct_zz(15, 2);
+                i = 29;
+                break;
+            case 0x1000000017:
+                _ = read_bits(i);
+                fill_dct_zz(14, 2);
+                i = 29;
+                break;
+            case 0x1000000018:
+                _ = read_bits(i);
+                fill_dct_zz(13, 2);
+                i = 29;
+                break;
+            case 0x1000000019:
+                _ = read_bits(i);
+                fill_dct_zz(12, 2);
+                i = 29;
+                break;
+            case 0x100000001a:
+                _ = read_bits(i);
+                fill_dct_zz(11, 2);
+                i = 29;
+                break;
+            case 0x100000001b:
+                _ = read_bits(i);
+                fill_dct_zz(31, 1);
+                i = 29;
+                break;
+            case 0x100000001c:
+                _ = read_bits(i);
+                fill_dct_zz(30, 1);
+                i = 29;
+                break;
+            case 0x100000001d:
+                _ = read_bits(i);
+                fill_dct_zz(29, 1);
+                i = 29;
+                break;
+            case 0x100000001e:
+                _ = read_bits(i);
+                fill_dct_zz(28, 1);
+                i = 29;
+                break;
+            case 0x100000001f:
+                _ = read_bits(i);
+                fill_dct_zz(27, 1);
+                i = 29;
+                break;
+            case 0xf00000010:
+                _ = read_bits(i);
+                fill_dct_zz(0, 40);
+                i = 29;
+                break;
+            case 0xf00000011:
+                _ = read_bits(i);
+                fill_dct_zz(0, 39);
+                i = 29;
+                break;
+            case 0xf00000012:
+                _ = read_bits(i);
+                fill_dct_zz(0, 38);
+                i = 29;
+                break;
+            case 0xf00000013:
+                _ = read_bits(i);
+                fill_dct_zz(0, 37);
+                i = 29;
+                break;
+            case 0xf00000014:
+                _ = read_bits(i);
+                fill_dct_zz(0, 36);
+                i = 29;
+                break;
+            case 0xf00000015:
+                _ = read_bits(i);
+                fill_dct_zz(0, 35);
+                i = 29;
+                break;
+            case 0xf00000016:
+                _ = read_bits(i);
+                fill_dct_zz(0, 34);
+                i = 29;
+                break;
+            case 0xf00000017:
+                _ = read_bits(i);
+                fill_dct_zz(0, 33);
+                i = 29;
+                break;
+            case 0xf00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 32);
+                i = 29;
+                break;
+            case 0xf00000019:
+                _ = read_bits(i);
+                fill_dct_zz(1, 14);
+                i = 29;
+                break;
+            case 0xf0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(1, 13);
+                i = 29;
+                break;
+            case 0xf0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(1, 12);
+                i = 29;
+                break;
+            case 0xf0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(1, 11);
+                i = 29;
+                break;
+            case 0xf0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(1, 10);
+                i = 29;
+                break;
+            case 0xf0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(1, 9);
+                i = 29;
+                break;
+            case 0xf0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(1, 8);
+                i = 29;
+                break;
+            case 0xe00000010:
+                _ = read_bits(i);
+                fill_dct_zz(0, 31);
+                i = 29;
+                break;
+            case 0xe00000011:
+                _ = read_bits(i);
+                fill_dct_zz(0, 30);
+                i = 29;
+                break;
+            case 0xe00000012:
+                _ = read_bits(i);
+                fill_dct_zz(0, 29);
+                i = 29;
+                break;
+            case 0xe00000013:
+                _ = read_bits(i);
+                fill_dct_zz(0, 28);
+                i = 29;
+                break;
+            case 0xe00000014:
+                _ = read_bits(i);
+                fill_dct_zz(0, 27);
+                i = 29;
+                break;
+            case 0xe00000015:
+                _ = read_bits(i);
+                fill_dct_zz(0, 26);
+                i = 29;
+                break;
+            case 0xe00000016:
+                _ = read_bits(i);
+                fill_dct_zz(0, 25);
+                i = 29;
+                break;
+            case 0xe00000017:
+                _ = read_bits(i);
+                fill_dct_zz(0, 24);
+                i = 29;
+                break;
+            case 0xe00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 23);
+                i = 29;
+                break;
+            case 0xe00000019:
+                _ = read_bits(i);
+                fill_dct_zz(0, 22);
+                i = 29;
+                break;
+            case 0xe0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 21);
+                i = 29;
+                break;
+            case 0xe0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(0, 20);
+                i = 29;
+                break;
+            case 0xe0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(0, 19);
+                i = 29;
+                break;
+            case 0xe0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(0, 18);
+                i = 29;
+                break;
+            case 0xe0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(0, 17);
+                i = 29;
+                break;
+            case 0xe0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(0, 16);
+                i = 29;
+                break;
+            case 0xd00000010:
+                _ = read_bits(i);
+                fill_dct_zz(10, 2);
+                i = 29;
+                break;
+            case 0xd00000011:
+                _ = read_bits(i);
+                fill_dct_zz(9, 2);
+                i = 29;
+                break;
+            case 0xd00000012:
+                _ = read_bits(i);
+                fill_dct_zz(5, 3);
+                i = 29;
+                break;
+            case 0xd00000013:
+                _ = read_bits(i);
+                fill_dct_zz(3, 4);
+                i = 29;
+                break;
+            case 0xd00000014:
+                _ = read_bits(i);
+                fill_dct_zz(2, 5);
+                i = 29;
+                break;
+            case 0xd00000015:
+                _ = read_bits(i);
+                fill_dct_zz(1, 7);
+                i = 29;
+                break;
+            case 0xd00000016:
+                _ = read_bits(i);
+                fill_dct_zz(1, 6);
+                i = 29;
+                break;
+            case 0xd00000017:
+                _ = read_bits(i);
+                fill_dct_zz(0, 15);
+                i = 29;
+                break;
+            case 0xd00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 14);
+                i = 29;
+                break;
+            case 0xd00000019:
+                _ = read_bits(i);
+                fill_dct_zz(0, 13);
+                i = 29;
+                break;
+            case 0xd0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 12);
+                i = 29;
+                break;
+            case 0xd0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(26, 1);
+                i = 29;
+                break;
+            case 0xd0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(25, 1);
+                i = 29;
+                break;
+            case 0xd0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(24, 1);
+                i = 29;
+                break;
+            case 0xd0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(23, 1);
+                i = 29;
+                break;
+            case 0xd0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(22, 1);
+                i = 29;
+                break;
+            case 0xc00000010:
+                _ = read_bits(i);
+                fill_dct_zz(0, 11);
+                i = 29;
+                break;
+            case 0xc00000011:
+                _ = read_bits(i);
+                fill_dct_zz(8, 2);
+                i = 29;
+                break;
+            case 0xc00000012:
+                _ = read_bits(i);
+                fill_dct_zz(4, 3);
+                i = 29;
+                break;
+            case 0xc00000013:
+                _ = read_bits(i);
+                fill_dct_zz(0, 10);
+                i = 29;
+                break;
+            case 0xc00000014:
+                _ = read_bits(i);
+                fill_dct_zz(2, 4);
+                i = 29;
+                break;
+            case 0xc00000015:
+                _ = read_bits(i);
+                fill_dct_zz(7, 2);
+                i = 29;
+                break;
+            case 0xc00000016:
+                _ = read_bits(i);
+                fill_dct_zz(21, 1);
+                i = 29;
+                break;
+            case 0xc00000017:
+                _ = read_bits(i);
+                fill_dct_zz(20, 1);
+                i = 29;
+                break;
+            case 0xc00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 9);
+                i = 29;
+                break;
+            case 0xc00000019:
+                _ = read_bits(i);
+                fill_dct_zz(19, 1);
+                i = 29;
+                break;
+            case 0xc0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(18, 1);
+                i = 29;
+                break;
+            case 0xc0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(1, 5);
+                i = 29;
+                break;
+            case 0xc0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(3, 3);
+                i = 29;
+                break;
+            case 0xc0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(0, 8);
+                i = 29;
+                break;
+            case 0xc0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(6, 2);
+                i = 29;
+                break;
+            case 0xc0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(17, 1);
+                i = 29;
+                break;
+            case 0xa00000008:
+                _ = read_bits(i);
+                fill_dct_zz(16, 1);
+                i = 29;
+                break;
+            case 0xa00000009:
+                _ = read_bits(i);
+                fill_dct_zz(5, 2);
+                i = 29;
+                break;
+            case 0xa0000000a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 7);
+                i = 29;
+                break;
+            case 0xa0000000b:
+                _ = read_bits(i);
+                fill_dct_zz(2, 3);
+                i = 29;
+                break;
+            case 0xa0000000c:
+                _ = read_bits(i);
+                fill_dct_zz(1, 4);
+                i = 29;
+                break;
+            case 0xa0000000d:
+                _ = read_bits(i);
+                fill_dct_zz(15, 1);
+                i = 29;
+                break;
+            case 0xa0000000e:
+                _ = read_bits(i);
+                fill_dct_zz(14, 1);
+                i = 29;
+                break;
+            case 0xa0000000f:
+                _ = read_bits(i);
+                fill_dct_zz(4, 2);
+                i = 29;
+                break;
+            case 0x600000001:
+                _ = read_bits(i);
+                fill_dct_zz(-1, -1);
+                i = 29;
+                break;
+            case 0x700000004:
+                _ = read_bits(i);
+                fill_dct_zz(2, 2);
+                i = 29;
+                break;
+            case 0x700000005:
+                _ = read_bits(i);
+                fill_dct_zz(9, 1);
+                i = 29;
+                break;
+            case 0x700000006:
+                _ = read_bits(i);
+                fill_dct_zz(0, 4);
+                i = 29;
+                break;
+            case 0x700000007:
+                _ = read_bits(i);
+                fill_dct_zz(8, 1);
+                i = 29;
+                break;
+            case 0x600000004:
+                _ = read_bits(i);
+                fill_dct_zz(7, 1);
+                i = 29;
+                break;
+            case 0x600000005:
+                _ = read_bits(i);
+                fill_dct_zz(6, 1);
+                i = 29;
+                break;
+            case 0x600000006:
+                _ = read_bits(i);
+                fill_dct_zz(1, 2);
+                i = 29;
+                break;
+            case 0x600000007:
+                _ = read_bits(i);
+                fill_dct_zz(5, 1);
+                i = 29;
+                break;
+            case 0x800000020:
+                _ = read_bits(i);
+                fill_dct_zz(13, 1);
+                i = 29;
+                break;
+            case 0x800000021:
+                _ = read_bits(i);
+                fill_dct_zz(0, 6);
+                i = 29;
+                break;
+            case 0x800000022:
+                _ = read_bits(i);
+                fill_dct_zz(12, 1);
+                i = 29;
+                break;
+            case 0x800000023:
+                _ = read_bits(i);
+                fill_dct_zz(11, 1);
+                i = 29;
+                break;
+            case 0x800000024:
+                _ = read_bits(i);
+                fill_dct_zz(3, 2);
+                i = 29;
+                break;
+            case 0x800000025:
+                _ = read_bits(i);
+                fill_dct_zz(1, 3);
+                i = 29;
+                break;
+            case 0x800000026:
+                _ = read_bits(i);
+                fill_dct_zz(0, 5);
+                i = 29;
+                break;
+            case 0x800000027:
+                _ = read_bits(i);
+                fill_dct_zz(10, 1);
+                i = 29;
+                break;
+            case 0x500000005:
+                _ = read_bits(i);
+                fill_dct_zz(0, 3);
+                i = 29;
+                break;
+            case 0x500000006:
+                _ = read_bits(i);
+                fill_dct_zz(4, 1);
+                i = 29;
+                break;
+            case 0x500000007:
+                _ = read_bits(i);
+                fill_dct_zz(3, 1);
+                i = 29;
+                break;
+            case 0x400000004:
+                _ = read_bits(i);
+                fill_dct_zz(0, 2);
+                i = 29;
+                break;
+            case 0x400000005:
+                _ = read_bits(i);
+                fill_dct_zz(2, 1);
+                i = 29;
+                break;
+            case 0x300000003:
+                _ = read_bits(i);
+                fill_dct_zz(1, 1);
+                i = 29;
+                break;
+            case 0x200000003:
+                _ = read_bits(i);
+                fill_dct_zz(0, 1);
+                i = 29;
+                break;
+        }
+    }
+}
+
+void Decoder::fill_dct_zz(int run, int level) {
+//    cout << "--- Match !!! ---" << endl;
+    // normal case
+    if (run != -1) {
+        dct_zz_i = dct_zz_i + run +1;
+        int s = read_bits(1);
+        if (s == 0) {
+            dct_zz.at(dct_zz_i) = level;
+            // debug
+//            cout << "level : " << level << endl;
+        } else if (s == 1) {
+            int neg_level = - level;
+            dct_zz.at(dct_zz_i) = neg_level;
+            // debug
+//            cout << "level : " << neg_level << endl;            
+        }
+    } else {
+        // escape case
+        run = get_escape_run();
+        level = get_escape_level();
+        dct_zz_i = dct_zz_i + run +1;
+        dct_zz.at(dct_zz_i) = level;
+        // debug
+//        cout << "level : " << level << endl;
+    }  
 }
 
 int Decoder::get_escape_run() {
@@ -1115,11 +2413,8 @@ int Decoder::get_escape_level() {
             uint8_t tmp_lc = ~(last8_code - 1);
             uint16_t tmp = 0;
             tmp += tmp_lc;
-            
             int neg_total_code = - tmp;
-    
-            cout << "neg val : " << neg_total_code << endl;
-            
+//            cout << "neg val : " << neg_total_code << endl;
             return neg_total_code;
         }
     } else {
@@ -1157,7 +2452,8 @@ void Decoder::reconstruct_dct(int num) {
         for (int m=0; m<8; m++) {
             for (int n=0; n<8; n++) {
                 i = zigzag_m[m][n];
-                dct_recon[m][n] = ( 2 * dct_zz[i] * quantizer_scale * intra_quant[m][n] ) /16;
+                // dct_recon[m][n] = ( 2 * dct_zz[i] * quantizer_scale * intra_quant[m][n] ) /16;
+                dct_recon[m][n] = (dct_zz[i] * quantizer_scale * intra_quant[m][n]) >> 3;
                  if ( ( dct_recon[m][n] & 1 ) == 0 ) {
                      dct_recon[m][n] = dct_recon[m][n] - sign(dct_recon[m][n]);
                  }
@@ -1169,32 +2465,65 @@ void Decoder::reconstruct_dct(int num) {
                 }
             }
         }
-        if ((num <= 3) && (num >= 0)) {
-            dct_recon[0][0] = dct_dc_y_past + dct_zz[0] * 8;
-            dct_dc_y_past = dct_recon[0][0];
-        } else if (num == 4) {
-            dct_recon[0][0] = dct_zz[0] * 8;
-            if (( mb_address - past_intra_address > 1)) {
-                dct_recon[0][0] = 128 * 8 + dct_recon[0][0];
-            } else {
-                dct_recon[0][0] = dct_dc_cb_past + dct_recon[0][0] ;
-            }
-            dct_dc_cb_past = dct_recon[0][0] ;
-        } else {
-            dct_recon[0][0] = dct_zz[0] * 8 ;
-            if ((mb_address - past_intra_address > 1)) {
-                dct_recon[0][0] = 128 * 8 + dct_recon[0][0];
-            } else {
-                dct_recon[0][0] = dct_dc_cr_past + dct_recon[0][0];
-            }
-            dct_dc_cr_past = dct_recon[0][0];
+//        if ((num <= 3) && (num >= 0)) {
+//            // dct_recon[0][0] = dct_dc_y_past + dct_zz[0] * 8;
+//            dct_recon[0][0] = dct_dc_y_past + (dct_zz[0] << 3);
+//            dct_dc_y_past = dct_recon[0][0];
+//        } else if (num == 4) {
+//            // dct_recon[0][0] = dct_zz[0] * 8;
+//            dct_recon[0][0] = dct_zz[0] << 3;
+//            if (( mb_address - past_intra_address > 1)) {
+//                // dct_recon[0][0] = 128 * 8 + dct_recon[0][0];
+//                dct_recon[0][0] = 1024 + dct_recon[0][0];
+//            } else {
+//                dct_recon[0][0] = dct_dc_cb_past + dct_recon[0][0] ;
+//            }
+//            dct_dc_cb_past = dct_recon[0][0];
+//        } else {
+//            // dct_recon[0][0] = dct_zz[0] * 8 ;
+//            dct_recon[0][0] = dct_zz[0] << 3 ;
+//            if ((mb_address - past_intra_address > 1)) {
+//                dct_recon[0][0] = 1024 + dct_recon[0][0];
+//            } else {
+//                dct_recon[0][0] = dct_dc_cr_past + dct_recon[0][0];
+//            }
+//            dct_dc_cr_past = dct_recon[0][0];
+//        }
+        switch (num) {
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+                dct_recon[0][0] = dct_dc_y_past + (dct_zz[0] << 3);
+                dct_dc_y_past = dct_recon[0][0];
+                break;
+            case 4:
+                dct_recon[0][0] = dct_zz[0] << 3;
+                if (( mb_address - past_intra_address > 1)) {
+                    dct_recon[0][0] = 1024 + dct_recon[0][0];
+                } else {
+                    dct_recon[0][0] = dct_dc_cb_past + dct_recon[0][0] ;
+                }
+                dct_dc_cb_past = dct_recon[0][0];
+                break;
+            case 5:
+                dct_recon[0][0] = dct_zz[0] << 3 ;
+                if ((mb_address - past_intra_address > 1)) {
+                    dct_recon[0][0] = 1024 + dct_recon[0][0];
+                } else {
+                    dct_recon[0][0] = dct_dc_cr_past + dct_recon[0][0];
+                }
+                dct_dc_cr_past = dct_recon[0][0];
+                break;
         }
     } else {
         int i = 0;
         for (int m=0; m<8; m++) {
             for (int n=0; n<8; n++) {
                 i = zigzag_m[m][n];
-                dct_recon[m][n] = ( ( (2 * dct_zz[i]) + sign(dct_zz[i]) ) * quantizer_scale * non_intra_quant[m][n] ) / 16;
+                // dct_recon[m][n] = ( ( (2 * dct_zz[i]) + sign(dct_zz[i]) ) * quantizer_scale * non_intra_quant[m][n] ) / 16;
+                // dct_recon[m][n] = ((dct_zz[i] + sign(dct_zz[i])) * quantizer_scale * non_intra_quant[m][n] ) * 0.125;
+                dct_recon[m][n] = ((dct_zz[i] + sign(dct_zz[i])) * quantizer_scale * non_intra_quant[m][n] ) >> 3;
                 if ( ( dct_recon[m][n] & 1 ) == 0 ) {
                     dct_recon[m][n] = dct_recon[m][n] - sign(dct_recon[m][n]);
                 }
@@ -1230,27 +2559,34 @@ void Decoder::idct() {
             double idct_val = 0;
              for (int i = 0; i < 8; i++) {
                 for (int j = 0; j < 8; j++) {
-                    double tmp = dct_recon.at(i).at(j) * cos(((2 * x + 1) * i * PI) / (16)) * cos(((2 * y + 1) * j * PI) / (16));
-                    if (i == 0) {
-                        tmp /= sqrt(2);
-                    }
-                    if (j == 0) {
-                        tmp /= sqrt(2);
-                    }
-                    idct_val += tmp;
+                    idct_val += idct_table.at(x).at(i) * idct_table.at(y).at(j) * dct_recon.at(i).at(j);
                 }
             }
-            idct_val /= 4;
-            if (picture_coding_type == 1) {
-                if ((int)idct_val < 0) {
-                    idct_prosessor.at(x).at(y) = 0;
-                } else if ((int)idct_val > 255) {
-                    idct_prosessor.at(x).at(y) = 255;
-                } else {
+//            if (picture_coding_type == 1) {
+//                if ((int)idct_val < 0) {
+//                    idct_prosessor.at(x).at(y) = 0;
+//                } else if ((int)idct_val > 255) {
+//                    idct_prosessor.at(x).at(y) = 255;
+//                } else {
+//                    idct_prosessor.at(x).at(y) = (int)idct_val;
+//                }     
+//            } else if ((picture_coding_type == 2) || (picture_coding_type == 3)) {
+//                idct_prosessor.at(x).at(y) = (int)idct_val;
+//            }
+            switch (picture_coding_type) {
+                case 1:
+                    if ((int)idct_val < 0) {
+                        idct_prosessor.at(x).at(y) = 0;
+                    } else if ((int)idct_val > 255) {
+                        idct_prosessor.at(x).at(y) = 255;
+                    } else {
+                        idct_prosessor.at(x).at(y) = (int)idct_val;
+                    }
+                    break;
+                case 2:
+                case 3:
                     idct_prosessor.at(x).at(y) = (int)idct_val;
-                }     
-            } else if ((picture_coding_type == 2) || (picture_coding_type == 3)) {
-                idct_prosessor.at(x).at(y) = (int)idct_val;
+                    break;
             }
         }
     }
@@ -1265,12 +2601,23 @@ void Decoder::idct() {
 //    }
 //    cout << endl;
     // Pushback to pic_mb_vec
-    if (picture_coding_type == 1) {
-        pic_mb_vec.push_back(dct_recon);
-    } else if ((picture_coding_type == 2) || (picture_coding_type == 3)) {
-        mb_p_num.push_back(mb_address);
-        mp_p_i.push_back(block_i);
-        pic_mb_vec_p.push_back(dct_recon);
+//    if (picture_coding_type == 1) {
+//        pic_mb_vec.push_back(dct_recon);
+//    } else if ((picture_coding_type == 2) || (picture_coding_type == 3)) {
+//        mb_p_num.push_back(mb_address);
+//        mp_p_i.push_back(block_i);
+//        pic_mb_vec_p.push_back(dct_recon);
+//    }
+    switch (picture_coding_type) {
+        case 1:
+            pic_mb_vec.push_back(dct_recon);
+            break;
+        case 2:
+        case 3:
+            mb_p_num.push_back(mb_address);
+            mp_p_i.push_back(block_i);
+            pic_mb_vec_p.push_back(dct_recon);        
+            break;
     }
 }
 
@@ -1369,93 +2716,54 @@ void Decoder::recon_pic() {
         for (int i=0; i<pic_mb_vec_p.size(); i++) {
             int mb_num = mb_p_num.at(i);
             int b_i = mp_p_i.at(i);
-            int y_r = (mb_num / mb_width) * 16;
-            int y_c = (mb_num % mb_width) * 16;
-            int c_r = (mb_num / mb_width) * 8;
-            int c_c = (mb_num % mb_width) * 8;
-
+            // int y_r = (mb_num / mb_width) * 16;
+            int y_r = (mb_num / mb_width) << 4;
+            // int y_c = (mb_num % mb_width) * 16;
+            int y_c = (mb_num % mb_width) << 4;
+            // int c_r = (mb_num / mb_width) * 8;
+            int c_r = (mb_num / mb_width) << 3;
+            // int c_c = (mb_num % mb_width) * 8;
+            int c_c = (mb_num % mb_width) << 3;
             switch (b_i) {
                 case 0:
-                    // debug
-                    cout << endl;
                     for (int r=0; r<8; r++) {
                         for (int c=0; c<8; c++) {
                             y_result.at(y_r + r).at(y_c + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                            // debug
-                            cout << y_result.at(y_r + r).at(y_c + c) << " ";
-                            if (c == 7) {
-                                cout << endl;
-                            }
                         }
                     }
                     break;
                 case 1:
-                    // debug
-                    cout << endl;
                     for (int r=0; r<8; r++) {
                         for (int c=0; c<8; c++) {
-                            y_result.at(y_r + r).at(y_c + 8 + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                            // debug
-                            cout << y_result.at(y_r + r).at(y_c + 8 + c) << " ";
-                            if (c == 7) {
-                                cout << endl;
-                            }                            
+                            y_result.at(y_r + r).at(y_c + 8 + c) = pic_mb_vec_p.at(i).at(r).at(c);                         
                         }
                     }                
                     break;
                 case 2:
-                    // debug
-                    cout << endl;
                     for (int r=0; r<8; r++) {
                         for (int c=0; c<8; c++) {
-                            y_result.at(y_r + 8 + r).at(y_c + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                            // debug
-                            cout << y_result.at(y_r + 8 + r).at(y_c + c) << " ";
-                            if (c == 7) {
-                                cout << endl;
-                            }                            
+                            y_result.at(y_r + 8 + r).at(y_c + c) = pic_mb_vec_p.at(i).at(r).at(c);                  
                         }
                     }
                     break;
                 case 3:
-                    // debug
-                    cout << endl;
                     for (int r=0; r<8; r++) {
                         for (int c=0; c<8; c++) {
-                            y_result.at(y_r + 8 + r).at(y_c + 8 + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                            // debug
-                            cout << y_result.at(y_r + 8 + r).at(y_c + 8 + c) << " ";
-                            if (c == 7) {
-                                cout << endl;
-                            }                            
+                            y_result.at(y_r + 8 + r).at(y_c + 8 + c) = pic_mb_vec_p.at(i).at(r).at(c);               
                         }
                     }
                     break;
-                case 4:
-                    // debug
-                    cout << endl;                
+                case 4:              
                     for (int r=0; r<8; r++) {
                         for (int c=0; c<8; c++) {
-                            cb_result.at(c_r + r).at(c_c + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                            // debug
-                            cout << cb_result.at(c_r + r).at(c_c + c) << " ";
-                            if (c == 7) {
-                                cout << endl;
-                            }                                      
+                            cb_result.at(c_r + r).at(c_c + c) = pic_mb_vec_p.at(i).at(r).at(c);                              
                         }
                     }
                     break;
-                case 5:
-                    // debug
-                    cout << endl;                
+                case 5:               
                     for (int r=0; r<8; r++) {
                         for (int c=0; c<8; c++) {
-                            cr_result.at(c_r + r).at(c_c + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                            // debug
-                            cout << cr_result.at(c_r + r).at(c_c + c) << " ";
-                            if (c == 7) {
-                                cout << endl;
-                            }                                 
+                            cr_result.at(c_r + r).at(c_c + c) = pic_mb_vec_p.at(i).at(r).at(c);                             
                         }
                     }
                     break;
@@ -1503,7 +2811,7 @@ void Decoder::ycbcr2rgb(bool to_buffer, bool to_output) {
                 G += (1.164 * Y) - (0.392 * Cb) - (0.813 * Cr);
                 B += (1.164 * Y) + (2.017 * Cb);
             }
-            // Process range to 0 - 255
+            // Clip range to 0 - 255
             if (R < 0) {
                 R = 0;
             } else if (R > 255) {
@@ -1531,9 +2839,11 @@ void Decoder::ycbcr2rgb(bool to_buffer, bool to_output) {
         pel_past_B = pel_tmp_B;
     }
     if (to_output) {
-        img_queue.push_back(pel_tmp_R);
-        img_queue.push_back(pel_tmp_G);
-        img_queue.push_back(pel_tmp_B);
+//        img_queue.push_back(pel_tmp_R);
+//        img_queue.push_back(pel_tmp_G);
+//        img_queue.push_back(pel_tmp_B);
+        // push to buffer
+        rgb2cvmat(pel_tmp_R, pel_tmp_G, pel_tmp_B);            
     }
 }
 
@@ -1541,7 +2851,6 @@ void Decoder::output_img() {
     // Declare output img class
     BMP Bmp_image;
     Bmp_image.SetSize(320, 240);
-    // Bmp_image.SetBitDepth(24);
     for (int r = 0; r < v_size; r++) {
         for (int c = 0; c < h_size; c++) {
             Bmp_image (c, r) -> Red = img_queue.at(0).at(r).at(c);
@@ -1625,6 +2934,20 @@ void Decoder::output_bmp() {
     }
     string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_decoder\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
     Bmp_image.WriteToFile(wfilename.c_str());
+}
+
+void Decoder::rgb2cvmat(vector<vector<int>> cv_R, vector<vector<int>> cv_G, vector<vector<int>> cv_B) {
+    Mat image(240, 320, CV_8UC3);
+    for (int r = 0; r< 240; r++)
+    {
+        for (int c = 0; c< 320; c++)
+        {
+            image.at<Vec3b>(r, c)[0] = cv_B.at(r).at(c);
+            image.at<Vec3b>(r, c)[1] = cv_G.at(r).at(c);
+            image.at<Vec3b>(r, c)[2] = cv_R.at(r).at(c);
+        }
+    }
+    imageQueue.push_back(image);
 }
 
 // Reconstruct P-frame
@@ -1761,7 +3084,6 @@ void Decoder::decode_mv() {
     down_bac = recon_down_bac >> 1;
     right_half_bac = recon_right_bac - 2 * right_bac;
     down_half_bac = recon_down_bac - 2 * down_bac;
-
     int R_for = 0;
     int G_for = 0;
     int B_for = 0;
@@ -1778,49 +3100,36 @@ void Decoder::decode_mv() {
             if (mb_motion_forward == "1") {
                 int pel_future_r = pel_r + down_for;
                 int pel_future_c = pel_c + right_for;
-                // debug
 //                cout << "(i, j) : " << i << ", " << j << endl;
 //                cout << "(pel_r , pel_c) : " << pel_r << ", " << pel_c << endl;
 //                cout << "(down_for, right_for) : " << down_for << ", " << right_for << endl;
 //                cout << "(pel_past_r , pel_past_c) : " << pel_future_r << ", " << pel_future_c << endl;                
                 if ( ! right_half_for && ! down_half_for ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
-                    // debug
-//                    cout << "In case 1" << endl;
                     R_for = pel_future_R.at(pel_future_r).at(pel_future_c);
                     G_for = pel_future_G.at(pel_future_r).at(pel_future_c);
                     B_for = pel_future_B.at(pel_future_r).at(pel_future_c);
 //                    pel_R.at(pel_r).at(pel_c) = pel_future_R.at(pel_future_r).at(pel_future_c);
 //                    pel_G.at(pel_r).at(pel_c) = pel_future_G.at(pel_future_r).at(pel_future_c);
 //                    pel_B.at(pel_r).at(pel_c) = pel_future_B.at(pel_future_r).at(pel_future_c);
-                }
-                if ( ! right_half_for && down_half_for ) {
+                } else if ( ! right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-                    // debug
-//                    cout << "In case 2" << endl;
-                    
                     R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c)) / 2);
                     G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c)) / 2);
                     B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c)) / 2);
 //                    pel_R.at(pel_r).at(pel_c) = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c)) / 2);
 //                    pel_G.at(pel_r).at(pel_c) = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c)) / 2);
 //                    pel_B.at(pel_r).at(pel_c) = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c)) / 2);
-                }
-                if ( right_half_for && ! down_half_for ) {
+                } else if ( right_half_for && ! down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-                    // debug
-//                    cout << "In case 3" << endl;
                     R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1)) / 2);
                     G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1)) / 2);
                     B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1)) / 2);
 //                    pel_R.at(pel_r).at(pel_c) = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1)) / 2);
 //                    pel_G.at(pel_r).at(pel_c) = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1)) / 2);
 //                    pel_B.at(pel_r).at(pel_c) = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1)) / 2);
-                }
-                if ( right_half_for && down_half_for ) {
-                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
-                    // debug
-//                    cout << "In case 4" << endl;                    
+                } else if ( right_half_for && down_half_for ) {
+                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;                
                     R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1) + pel_future_R.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
                     G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1) + pel_future_G.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
                     B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1) + pel_future_B.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
@@ -1832,25 +3141,19 @@ void Decoder::decode_mv() {
             if (mb_motion_backward == "1") {
                 int pel_past_r = pel_r + down_bac;
                 int pel_past_c = pel_c + right_bac; 
-                // debug
 //                cout << "(i, j) : " << i << ", " << j << endl;
 //                cout << "(pel_r , pel_c) : " << pel_r << ", " << pel_c << endl;
 //                cout << "(down_bac, right_bac) : " << down_bac << ", " << right_bac << endl;
 //                cout << "(pel_past_r , pel_past_c) : " << pel_past_r << ", " << pel_past_c << endl;                  
-                if ( ! right_half_bac && ! down_half_bac ) {
-                    // debug
-//                    cout << "In case 1" << endl;                    
+                if ( ! right_half_bac && ! down_half_bac ) {             
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
                     R_bac = pel_past_R.at(pel_past_r).at(pel_past_c);
                     G_bac = pel_past_G.at(pel_past_r).at(pel_past_c);
                     B_bac = pel_past_B.at(pel_past_r).at(pel_past_c);
 //                    pel_R.at(pel_r).at(pel_c) = pel_past_R.at(pel_past_r).at(pel_past_c);
 //                    pel_G.at(pel_r).at(pel_c) = pel_past_G.at(pel_past_r).at(pel_past_c);
-//                    pel_B.at(pel_r).at(pel_c) = pel_past_B.at(pel_past_r).at(pel_past_c);                    
-                }
-                if ( ! right_half_bac && down_half_bac ) {
-                    // debug
-//                    cout << "In case 2" << endl;                             
+//                    pel_B.at(pel_r).at(pel_c) = pel_past_B.at(pel_past_r).at(pel_past_c);
+                } else if ( ! right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
@@ -1858,10 +3161,7 @@ void Decoder::decode_mv() {
 //                    pel_R.at(pel_r).at(pel_c) = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
 //                    pel_G.at(pel_r).at(pel_c) = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
 //                    pel_B.at(pel_r).at(pel_c) = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                }
-                if ( right_half_bac && ! down_half_bac ) {
-                    // debug
-//                    cout << "In case 3" << endl;         
+                } else if ( right_half_bac && ! down_half_bac ) {       
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
@@ -1869,10 +3169,7 @@ void Decoder::decode_mv() {
 //                    pel_R.at(pel_r).at(pel_c) = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
 //                    pel_G.at(pel_r).at(pel_c) = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
 //                    pel_B.at(pel_r).at(pel_c) = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1)) / 2);
-                }
-                if ( right_half_bac && down_half_bac ) {
-                    // debug
-//                    cout << "In case 4" << endl;         
+                } else if ( right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1) + pel_past_R.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1) + pel_past_G.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
@@ -1893,7 +3190,7 @@ void Decoder::decode_mv() {
             } else {
                 pel_R.at(pel_r).at(pel_c) = round((R_for + R_bac) / 2);
                 pel_G.at(pel_r).at(pel_c) = round((G_for + G_bac) / 2);
-                pel_B.at(pel_r).at(pel_c) = round((B_for + B_bac) / 2);        
+                pel_B.at(pel_r).at(pel_c) = round((B_for + B_bac) / 2);
             }            
         }
     }
