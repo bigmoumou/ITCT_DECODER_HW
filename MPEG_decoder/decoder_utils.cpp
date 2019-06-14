@@ -11,7 +11,6 @@
 #include <algorithm>
 #define PI 3.14159265
 
-#include "easyBMP/EasyBMP.h"
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -46,6 +45,11 @@ Decoder::Decoder() : dct_zz(64, 0), pattern_code(6, 0), dct_recon(8, vector<int>
     pel_tmp_R = vector<vector<int>>(240, vector<int>(320, 0));
     pel_tmp_G = vector<vector<int>>(240, vector<int>(320, 0));
     pel_tmp_B = vector<vector<int>>(240, vector<int>(320, 0));
+    // new fast idct
+    iclp = iclip+512;
+    for (int i= -512; i<512; i++) {
+        iclp[i] = (i<-256) ? -256 : ((i>255) ? 255 : i);
+    }
 }
 
 // Main functions
@@ -55,7 +59,7 @@ void Decoder::read_data(string filename) {
         cout << "File not found !" << endl;
         exit(1);
     }
-    abs_buf = {istreambuf_iterator<char>{f}, {}};
+    que_buf = {istreambuf_iterator<char>{f}, {}};
 }
 
 void Decoder::video_sequence() {
@@ -89,19 +93,6 @@ void Decoder::sequence_header() {
     load_non_intra_quantizer_matrix = read_bits(1);   
     mb_width = h_size / 16;
     mb_height = v_size / 16;
-
-    // debug
-//    print_hex(seq_h_code);
-//    print_hex(h_size);
-//    print_hex(v_size);
-//    print_hex(p_a_r);
-//    print_hex(p_r);
-//    print_hex(b_r);
-//    print_hex(m_b);
-//    print_hex(vbv_buffer_size);
-//    print_hex(constrained_parameter_flag);
-//    print_hex(load_intra_quantizer_matrix);
-//    print_hex(load_non_intra_quantizer_matrix);
     
     if ( load_intra_quantizer_matrix ) {
         load_intra_quant();
@@ -118,12 +109,6 @@ void Decoder::group_of_pictures() {
     time_code = read_bits(25);
     closed_gop = read_bits(1);
     broken_link = read_bits(1);
-    
-    // debug
-//    print_hex(gop_start_code);
-//    print_hex(time_code);
-//    print_hex(closed_gop);
-//    print_hex(broken_link);
     
     next_start_code();
     
@@ -147,29 +132,12 @@ void Decoder::picture() {
     picture_coding_type = read_bits(3);
     vbv_delay = read_bits(16);
 
-    // debug
-//    cout << "==PICTURE_START_CODE(";
-//    cout << dec << pic_num;
-//    cout << ")== -> ";
-//    print_hex(picture_start_code);
-//    cout << "    temporal_reference: ";
-//    print_hex(temporal_reference);
-//    cout << "    picture_coding_type: ";
-//    print_hex(picture_coding_type);
-//    cout << "    vbv_delay: ";
-//    print_dec(vbv_delay);
-
     if (picture_coding_type == 2 || picture_coding_type == 3) {
         full_pel_forward_vector = read_bits(1);
         forward_f_code = read_bits(3);
         // decode forward_f_code
         forward_r_size = forward_f_code - 1;
         forward_f = 1 << forward_r_size;
-        // debug
-//        cout << "    full_pel_forward_vector: ";
-//        print_dec(full_pel_forward_vector);
-//        cout << "    forward_f_code: ";
-//        print_dec(forward_f_code);
     }
     if (picture_coding_type == 3) {
         full_pel_backward_vector = read_bits(1);
@@ -183,11 +151,7 @@ void Decoder::picture() {
         extra_information_picture = read_bits(8);
     }
     extra_bit_picture = read_bits(1);
-    
-    // debug
-//    cout << "    extra_bit_picture: ";
-//    print_hex(extra_bit_picture);    
-    
+
     if (picture_coding_type != 3) {
         pel_future_R = pel_past_R;
         pel_future_G = pel_past_G;
@@ -211,20 +175,14 @@ void Decoder::picture() {
         recon_pic();
         ycbcr2rgb(true, false);  // to_pel_past, to_output
         if (pic_num > 1) {
-//            img_queue.push_back(pel_future_R);
-//            img_queue.push_back(pel_future_G);
-//            img_queue.push_back(pel_future_B);
             // push to buffer
-            rgb2cvmat(pel_future_R, pel_future_G, pel_future_B);        
+             rgb2cvmat(pel_future_R, pel_future_G, pel_future_B);        
         }
     }
-//    if (img_queue.size() > 0) {
-//        output_img();
-//    }
     if (imageQueue.size() > 0) {
         imshow("test", imageQueue.at(0));
         imageQueue.pop_front();
-        waitKey(30);
+        waitKey(1);
     }
 }
 
@@ -248,20 +206,9 @@ void Decoder::slice() {
 
     uint8_t nbs = nextbits(1);
     if (nbs == 0x1) {
-        // debug
-//        cout << "[ TODO ] : extra_bit_slice & extra_information_slice ..." << endl;
+        ;
     }
     extra_bit_slice = read_bits(1);
-
-    // debug
-//    cout << "==SLICE_START_CODE== -> ";    
-//    print_hex(slice_start_code);
-//    cout << "    quantizer_scale: ";
-//    print_hex(quantizer_scale);
-//    cout << "    extra_bit_slice: ";
-//    print_hex(extra_bit_slice);
-
-    // macroblock();
     do {
         macroblock();
     } while (nextbits(23) != 0);
@@ -273,32 +220,19 @@ void Decoder::macroblock() {
     pattern_code = {0, 0, 0, 0, 0, 0};
     // init cbp
     cbp = 0;
-
     // read macroblock stuffing & escape
     uint16_t nbs11 = nextbits(11);
     while (nbs11 == 0xF) {
         mb_stuffing = read_bits(11);
     }
-//    nbs11 = nextbits(11);
-//    if (nbs11 == 0x8) {
-//        mb_escape = read_bits(11);
-//    }
-
     // read macroblock increment number
-    //      search 1-11 bits > get int
     int mb_inc = 0;
     int inc_acc = 0;
     do {
-        // debug
-//        string s = bitset<32>(nextbits(32)).to_string();
-//        cout << s << endl;
-        mb_inc = get_mb_address_map();
+        mb_inc = get_mb_address_map_s();
         if (mb_inc == 101) {
-            // mb_address_increment = 33;
             inc_acc += 33;
-//            cout << "          macroblcok_escape" << endl;
         } else {
-            // mb_address_increment = mb_inc;
             inc_acc += mb_inc;
         }
     } while (mb_inc == 101);
@@ -309,7 +243,6 @@ void Decoder::macroblock() {
         dct_dc_cb_past = 1024;
         dct_dc_cr_past = 1024;
     }
-
     // process skipped macroblocks
     for (int i=1; i<inc_acc; i++) {
         // update mb_address & (mb_row, mb_col)
@@ -330,7 +263,6 @@ void Decoder::macroblock() {
     mb_address += 1;
     mb_row = mb_address / mb_width;
     mb_col = mb_address % mb_width;
-
     // read 1-6 bits > get 5 bits string
     mb_type = get_mb_type_map();
     mb_quant = mb_type.substr(0, 1);
@@ -339,25 +271,6 @@ void Decoder::macroblock() {
     mb_pattern = mb_type.substr(3, 1);
     mb_intra = mb_type.substr(4, 1);
 
-    // debug
-//    cout << "    ==MACROBLOCK(";
-//    cout << dec << (mb_address + 1);
-//    cout << ")==" << endl;
-//    cout << "        macroblock_address_increment: ";
-//    cout << mb_address_increment << endl;
-//    cout << "        macroblock_type: ";
-//    cout << stoi(mb_type, nullptr, 2) << endl;
-//    cout << "            macroblcok_quant: ";
-//    cout << mb_quant << endl;
-//    cout << "            macroblcok_motion_forward: ";
-//    cout << mb_motion_forward << endl;
-//    cout << "            macroblcok_motion_backward: ";    
-//    cout << mb_motion_backward << endl;
-//    cout << "            macroblcok_pattern: ";
-//    cout << mb_pattern << endl;
-//    cout << "            macroblcok_intra: ";    
-//    cout << mb_intra << endl;
-
     // init recon_right_for & recon_down_for for B-frame
     if ((picture_coding_type == 3) && (mb_intra == "1")) {
         recon_right_for_prev = 0;
@@ -365,39 +278,22 @@ void Decoder::macroblock() {
         recon_right_bac_prev = 0;
         recon_down_bac_prev = 0;
     }
-
     // init for motion vector
     recon_right_for = 0;
     recon_down_for = 0;
-
     if (mb_quant == "1") {
         quantizer_scale = read_bits(5);
-        // debug
-//        cout << "        quantier_scale: ";
-//        print_dec(quantizer_scale);
     }
     if (mb_motion_forward == "1") {
         // horizontal
         motion_horizontal_forward_code = get_motion_vector_map();
-        // debug
-//        cout << "        motion_horizontal_forward_code: ";
-//        cout << motion_horizontal_forward_code << endl;
         if (((forward_f) != 1) && (motion_horizontal_forward_code != 0)) {
             motion_horizontal_forward_r = read_bits(forward_r_size);
-            // debug
-//            cout << "        motion_horizontal_forward_r: ";
-//            print_dec(motion_horizontal_forward_r);
         }
         // vertical
         motion_vertical_forward_code = get_motion_vector_map();
-        // debug
-//        cout << "        motion_vertical_forward_code: ";
-//        cout << motion_vertical_forward_code << endl;
         if (((forward_f) != 1) && (motion_vertical_forward_code != 0)) {
             motion_vertical_forward_r = read_bits(forward_r_size);
-            // debug
-//            cout << "        motion_vertical_forward_r: ";
-//            print_dec(motion_vertical_forward_r);
         }
         // motion vectors
         cal_motion_vector_p();    
@@ -408,44 +304,26 @@ void Decoder::macroblock() {
         recon_down_for_prev = 0;
         mb_motion_forward = "1";
     }
-
     // init back motion vector
     recon_right_bac = 0;
     recon_down_bac = 0;
     if (mb_motion_backward == "1") {
         // horizontal
         motion_horizontal_backward_code = get_motion_vector_map();
-        // debug
-//        cout << "        motion_horizontal_backward_code: ";
-//        cout << motion_horizontal_backward_code << endl;        
         if (((backward_f) != 1) && (motion_horizontal_backward_code != 0)) {
             motion_horizontal_backward_r = read_bits(backward_r_size);
-            // debug
-//            cout << "        motion_horizontal_backward_r: ";
-//            print_dec(motion_horizontal_backward_r);
         }
         // vertical
         motion_vertical_backward_code = get_motion_vector_map();
-        // debug
-//        cout << "        motion_vertical_backward_code: ";
-//        cout << motion_vertical_backward_code << endl;        
         if (((backward_f) != 1) && (motion_vertical_backward_code != 0)) {
             motion_vertical_backward_r = read_bits(backward_r_size);
-            // debug
-//            cout << "        motion_vertical_backward_r: ";
-//            print_dec(motion_vertical_backward_r);
         }
         // motion vectors
         cal_motion_vector_b();
     }
-
     // init dct dc past
     if (mb_intra == "0") {
         decode_mv();
-        // debug
-//        cout << "        ForMV(";
-//        cout << recon_right_for << ",";
-//        cout << recon_down_for << ")" << endl;   
     } else {
         for (int i=0; i<16; i++) {
             for (int j=0; j<16; j++) {
@@ -482,11 +360,8 @@ void Decoder::block(int i) {
     dct_zz = vector<int>(64, 0);
     // main loop
     if (pattern_code[i] == 1) {
-        // debug
-        // cout << "        ==BLOCK(" << i << ")==" << endl;
         if (mb_intra == "1") {
             if (i<4) {
-                // dct_dc_size_luminance = get_dct_dc_size_lum_map();
                 dct_dc_size_luminance = get_dct_dc_size_lum_map_s();
                 if(dct_dc_size_luminance != 0) {
                     dct_dc_differential = read_bits(dct_dc_size_luminance);   
@@ -495,20 +370,11 @@ void Decoder::block(int i) {
                     } else {
                         dct_zz.at(0) = (-1 << (dct_dc_size_luminance)) | (dct_dc_differential+1);
                     }
-                    // debug
-                    // cout << "            dct_dc_size_luminance: ";
-                    // cout << dct_dc_size_luminance << endl;
-                    // cout << "            dct_dc_differential_luminance: ";
-                    // print_dec(dct_dc_differential);
                 } else {
-                    dct_zz.at(0) = 0;
-                    // debug
-                    // cout << "            dct_dc_size_luminance: ";
-                    // cout << dct_dc_size_luminance << endl;                    
+                    dct_zz.at(0) = 0;                  
                 }
             } else {
-                dct_dc_size_chrominance = get_dct_dc_size_chr_map();
-                // dct_dc_size_chrominance = get_dct_dc_size_chr_map_s();
+                dct_dc_size_chrominance = get_dct_dc_size_chr_map_s();
                 if(dct_dc_size_chrominance !=0) {
                     dct_dc_differential = read_bits(dct_dc_size_chrominance);
                     if (dct_dc_differential & (1 << (dct_dc_size_chrominance-1))) {
@@ -516,40 +382,30 @@ void Decoder::block(int i) {
                     } else {
                         dct_zz.at(0) = (-1 << (dct_dc_size_chrominance)) | (dct_dc_differential+1) ;
                     }
-                    // debug
-                    // cout << "            dct_dc_size_chrominance: ";
-                    // cout << dct_dc_size_chrominance << endl;
-                    // cout << "            dct_dc_differential_luminance: ";     
-                    // print_dec(dct_dc_differential);
                 } else {
-                    dct_zz.at(0) = 0;
-                    // debug
-                    // cout << "            dct_dc_size_chrominance: ";
-                    // cout << dct_dc_size_chrominance << endl;          
+                    dct_zz.at(0) = 0; 
                 }
             }
         } else {
-            // dct_coeff_first();
             dct_coeff_first_s();
         }
         if (picture_coding_type != 4) {
-            // If mb_intra == 1 then i shall be set to zero before the first dct_coeff_next. 
             if (mb_intra == "1") {
                 dct_zz_i = 0;
             }
             while (nextbits(2) != 2) {
-                // dct_coeff_next();
                 dct_coeff_next_s();
             }
             end_of_block = read_bits(2);
             // debug
             if (end_of_block == 2) {
-                // cout << "            EOB" << endl;
+                ;
             }
             // Reconstruct dct_recon
             reconstruct_dct(i);
             // IDCT
-            idct();
+//             idct();
+            fast_idct();
         }
     }
 }
@@ -593,7 +449,7 @@ void Decoder::print_dec(unsigned int code) {
 void Decoder::next_start_code() {
     uint32_t next_buf = 0;
     for (int i=0; i<4; i++) {
-        next_buf = (next_buf << 8) + (abs_buf.at(i));
+        next_buf = (next_buf << 8) + (que_buf.at(i));
     }
     if ((next_buf >> 8) == 0x1) {
         zero_byte_flag = true;
@@ -631,11 +487,6 @@ bool Decoder::is_next_slice_code() {
 
 uint32_t Decoder::nextbits(int num) {
     uint32_t bit32  = 0;
-    
-//    cout << "----- nextbits -----" << endl;
-//    string s = bitset<32>(bit32).to_string();
-//    cout << s << endl;
-    
     // Head
     int i = 0;
     int total_rem = num;
@@ -645,7 +496,7 @@ uint32_t Decoder::nextbits(int num) {
         total_rem = 0;
         if (buf_cursor == 0) {
             // update buffer
-            uint8_t tmp_buf = abs_buf.at(i);
+            uint8_t tmp_buf = que_buf.at(i);
             i += 1;
             bit32 = (bit32 << num) + (tmp_buf >> (8 - num));
         } else {
@@ -657,7 +508,7 @@ uint32_t Decoder::nextbits(int num) {
             // update total_rem
             total_rem -= 8;                    
             // read 8-bit * 1
-            bit32 = (bit32 << 8) + abs_buf.at(i);
+            bit32 = (bit32 << 8) + que_buf.at(i);
             i += 1;
         } else {
             // update total_rem
@@ -667,44 +518,26 @@ uint32_t Decoder::nextbits(int num) {
             bit32 = (bit32 << head_rem) + (tmp_buf >> buf_cursor);
         }
     }
-    
-//    string s2 = bitset<32>(bit32).to_string();
-//    cout << s2 << endl;    
-    
     // Middle
     int quotient = total_rem / 8;
-    
+
     for (int j=0; j<quotient; i++, j++) {
         // update total_rem
         total_rem -= 8;
         // read 8-bit * N
-        bit32 = (bit32 << 8) + abs_buf.at(i);        
+        bit32 = (bit32 << 8) + que_buf.at(i);
     }
-
-//    string s3 = bitset<32>(bit32).to_string();
-//    cout << s3 << endl;        
-    
     // Last
     if (total_rem > 0) {
         // update buffer
-        uint8_t tmp_buf = abs_buf.at(i);
+        uint8_t tmp_buf = que_buf.at(i);
         bit32 = (bit32 << total_rem) + (tmp_buf >> (8 - total_rem));
     }
-
-//    string s4 = bitset<32>(bit32).to_string();
-//    cout << s4 << endl;        
-    
     return bit32;  
 }
 
 uint32_t Decoder::read_bits(int num) {
     uint32_t bit32  = 0;
-    
-//    string s = bitset<32>(bit32).to_string();
-//    cout << s << endl;
-//    string b = bitset<8>(buf).to_string();
-//    cout << b << endl;    
-    
     int new_cur_pos = get_cur_pos(buf_cursor, num);
     // Head
     int total_rem = num;
@@ -714,9 +547,9 @@ uint32_t Decoder::read_bits(int num) {
         total_rem = 0;        
         if (buf_cursor == 0) {
             // update buffer
-            buf = abs_buf.at(0);
+            buf = que_buf.at(0);
             bit32 = (bit32 << num) + (buf >> (8 - num));
-            abs_buf.erase(abs_buf.begin(), abs_buf.begin()+1);
+            que_buf.pop_front();
         } else {
             uint8_t tmp_buf = buf << buf_cursor;
             bit32 = (bit32 << num) + (tmp_buf >> (8 - (buf_cursor + num) + buf_cursor));
@@ -724,10 +557,10 @@ uint32_t Decoder::read_bits(int num) {
     } else {
         if (buf_cursor == 0) {
             // update total_rem
-            total_rem -= 8;                    
+            total_rem -= 8;
             // read 8-bit * 1
-            bit32 = (bit32 << 8) + abs_buf.at(0);
-            abs_buf.erase(abs_buf.begin(), abs_buf.begin()+1); 
+            bit32 = (bit32 << 8) + que_buf.at(0);
+            que_buf.pop_front();
         } else {
             // update total_rem
             total_rem -= head_rem;
@@ -736,41 +569,23 @@ uint32_t Decoder::read_bits(int num) {
             bit32 = (bit32 << head_rem) + (tmp_buf >> buf_cursor);
         }
     }
-    
-//    string s1 = bitset<32>(bit32).to_string();
-//    cout << s1 << endl;
-//    string b1 = bitset<8>(buf).to_string();
-//    cout << b1 << endl;
-    
     // Middle
     int quotient = total_rem / 8;
+
     for (int i=0; i<quotient; i++) {
         // update total_rem
         total_rem -= 8;
         // read 8-bit * N
-        bit32 = (bit32 << 8) + abs_buf.at(0);
-        abs_buf.erase(abs_buf.begin(), abs_buf.begin()+1);
+        bit32 = (bit32 << 8) + que_buf.at(0);
+        que_buf.pop_front();
     }
-    
-//    string s2 = bitset<32>(bit32).to_string();
-//    cout << s2 << endl;
-//    string b2 = bitset<8>(buf).to_string();
-//    cout << b2 << endl;    
-    
     // Last
     if (total_rem > 0) {
         // update buffer
-        buf = abs_buf.at(0);
+        buf = que_buf.at(0);
         bit32 = (bit32 << total_rem) + (buf >> (8 - total_rem));
-        abs_buf.erase(abs_buf.begin(), abs_buf.begin()+1);
+        que_buf.pop_front();
     }
-    
-//    string s3 = bitset<32>(bit32).to_string();
-//    cout << s3 << endl;
-//    string b3 = bitset<8>(buf).to_string();
-//    cout << b3 << endl;   
-//    cout << endl;
-    
     // update cursor position
     buf_cursor = new_cur_pos;
     // modify buffer
@@ -811,54 +626,175 @@ void Decoder::update_pattern_code(vector<int> & pattern_code) {
                 _tmp = (_tmp << 1) + 1;
             }
         }
-//        cout << "        coded_block_pattern: ";
-//        print_dec(_tmp);
     }
 }
 
 // Get Mapping Value
-int Decoder::get_mb_address_map() {
-    // debug
-//    cout << "[ Info ] : in `get_mb_address_map()` function ..." << endl;
-    uint16_t nbs11 = nextbits(11);
-    uint16_t tmp_nbs = 0;
+int Decoder::get_mb_address_map_s() {
+    uint32_t nbs32 = 0;
+    uint16_t second_nbs16 = 0;
     for (int i=1; i<12; i++) {
-        string s = bitset<11>(nbs11).to_string();
-        s = s.substr(0, i);
-        // debug
-//        cout << "    --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
-        map<string, int>::iterator iter;
-        iter = mb_address_map.find(s);
-        if (iter !=mb_address_map.end()) {
-            // debug
-//            cout << "        --> get result : ";
-//            cout << iter->second << endl;
-            uint8_t _ = read_bits(i);
-            return iter->second;
+        second_nbs16 = nextbits(i);
+        nbs32 = i;
+        nbs32 = (nbs32 << 16) + second_nbs16;
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs32) {
+            case 0xb0008:
+                _ = read_bits(i);
+                i = 12;
+                return 101;
+            case 0xb000f:
+                _ = read_bits(i);
+                i = 12;
+                return 100;
+            case 0xb0018:
+                _ = read_bits(i);
+                i = 12;
+                return 33;
+            case 0xb0019:
+                _ = read_bits(i);
+                i = 12;
+                return 32;
+            case 0xb001a:
+                _ = read_bits(i);
+                i = 12;
+                return 31;
+            case 0xb001b:
+                _ = read_bits(i);
+                i = 12;
+                return 30;
+            case 0xb001c:
+                _ = read_bits(i);
+                i = 12;
+                return 29;
+            case 0xb001d:
+                _ = read_bits(i);
+                i = 12;
+                return 28;
+            case 0xb001e:
+                _ = read_bits(i);
+                i = 12;
+                return 27;
+            case 0xb001f:
+                _ = read_bits(i);
+                i = 12;
+                return 26;
+            case 0xb0020:
+                _ = read_bits(i);
+                i = 12;
+                return 25;
+            case 0xb0021:
+                _ = read_bits(i);
+                i = 12;
+                return 24;
+            case 0xb0022:
+                _ = read_bits(i);
+                i = 12;
+                return 23;
+            case 0xb0023:
+                _ = read_bits(i);
+                i = 12;
+                return 22;
+            case 0xa0012:
+                _ = read_bits(i);
+                i = 12;
+                return 21;
+            case 0xa0013:
+                _ = read_bits(i);
+                i = 12;
+                return 20;
+            case 0xa0014:
+                _ = read_bits(i);
+                i = 12;
+                return 19;
+            case 0xa0015:
+                _ = read_bits(i);
+                i = 12;
+                return 18;
+            case 0xa0016:
+                _ = read_bits(i);
+                i = 12;
+                return 17;
+            case 0xa0017:
+                _ = read_bits(i);
+                i = 12;
+                return 16;
+            case 0x80006:
+                _ = read_bits(i);
+                i = 12;
+                return 15;
+            case 0x80007:
+                _ = read_bits(i);
+                i = 12;
+                return 14;
+            case 0x80008:
+                _ = read_bits(i);
+                i = 12;
+                return 13;
+            case 0x80009:
+                _ = read_bits(i);
+                i = 12;
+                return 12;
+            case 0x8000a:
+                _ = read_bits(i);
+                i = 12;
+                return 11;
+            case 0x8000b:
+                _ = read_bits(i);
+                i = 12;
+                return 10;
+            case 0x70006:
+                _ = read_bits(i);
+                i = 12;
+                return 9;
+            case 0x70007:
+                _ = read_bits(i);
+                i = 12;
+                return 8;
+            case 0x50002:
+                _ = read_bits(i);
+                i = 12;
+                return 7;
+            case 0x50003:
+                _ = read_bits(i);
+                i = 12;
+                return 6;
+            case 0x40002:
+                _ = read_bits(i);
+                i = 12;
+                return 5;
+            case 0x40003:
+                _ = read_bits(i);
+                i = 12;
+                return 4;
+            case 0x30002:
+                _ = read_bits(i);
+                i = 12;
+                return 3;
+            case 0x30003:
+                _ = read_bits(i);
+                i = 12;
+                return 2;
+            case 0x10001:
+                _ = read_bits(i);
+                i = 12;
+                return 1;
         }
     }
 }
 
 string Decoder::get_mb_type_map() {
-    // debug
-//    cout << "[ Info ] : in `get_mb_type_map()` function ..." << endl;
     uint8_t nbs6 = nextbits(6);
     uint8_t tmp_nbs = 0;
     for (int i=1; i<7; i++) {
         string s = bitset<6>(nbs6).to_string();
         s = s.substr(0, i);
-        // debug
-//        cout << "    --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
         map<string, string>::iterator iter;
         if (picture_coding_type == 1) {
             // i-frame
             iter = mb_type_i_map.find(s);
             if (iter !=mb_type_i_map.end()) {
-                    // debug
-//                    cout << "        --> get result : ";
-//                    cout << iter->second << endl;
                     uint8_t _ = read_bits(i);
                     return iter->second;
             }         
@@ -866,9 +802,6 @@ string Decoder::get_mb_type_map() {
             // p-frame
             iter = mb_type_p_map.find(s);
             if (iter !=mb_type_p_map.end()) {
-                    // debug
-//                    cout << "        --> get result : ";
-//                    cout << iter->second << endl;
                     uint8_t _ = read_bits(i);
                     return iter->second;
             }          
@@ -876,34 +809,9 @@ string Decoder::get_mb_type_map() {
             // b-frame
             iter = mb_type_b_map.find(s);
             if (iter !=mb_type_b_map.end()) {
-                    // debug
-//                    cout << "        --> get result : ";
-//                    cout << iter->second << endl;
                     uint8_t _ = read_bits(i);
                     return iter->second;
             }      
-        }
-    }
-}
-
-int Decoder::get_dct_dc_size_lum_map() {
-    // debug
-//    cout << "            [ Info ] : in `dct_dc_size_lum_map()` function ..." << endl;
-    uint8_t nbs7 = nextbits(7);
-    for (int i=2; i<8; i++) {
-        string s = bitset<7>(nbs7).to_string();
-        s = s.substr(0, i);
-        // debug
-//        cout << "                --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
-        map<string, int>::iterator iter;
-        iter = dct_dc_size_lum_map.find(s);
-        if (iter !=dct_dc_size_lum_map.end()) {
-            // debug
-//            cout << "                    --> get result : ";
-//            cout << iter->second << endl;
-            uint8_t _ = read_bits(i);
-            return iter->second;
         }
     }
 }
@@ -954,28 +862,6 @@ int Decoder::get_dct_dc_size_lum_map_s() {
                 _ = read_bits(i);
                 i = 8;
                 return 8;
-        }
-    }
-}
-
-int Decoder::get_dct_dc_size_chr_map() {
-    // debug
-//    cout << "            [ Info ] : in `get_dct_dc_size_chr_map()` function ..." << endl;
-    uint8_t nbs8 = nextbits(8);
-    for (int i=2; i<9; i++) {
-        string s = bitset<8>(nbs8).to_string();
-        s = s.substr(0, i);
-        // debug
-//        cout << "                --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
-        map<string, int>::iterator iter;
-        iter = dct_dc_size_chr_map.find(s);
-        if (iter !=dct_dc_size_chr_map.end()) {
-            // debug
-//            cout << "                    --> get result : ";
-//            cout << iter->second << endl;
-            uint8_t _ = read_bits(i);
-            return iter->second;
         }
     }
 }
@@ -1035,15 +921,9 @@ int Decoder::get_motion_vector_map() {
     for (int i=1; i<12; i++) {
         string s = bitset<11>(nbs11).to_string();
         s = s.substr(0, i);
-        // debug
-//        cout << "                --> searching i = " << i;
-//        cout << " (string : " << s << ")" << endl;
         map<string, int>::iterator iter;
         iter = motion_vector_map.find(s);
         if (iter !=motion_vector_map.end()) {
-            // debug
-//            cout << "                    --> get result : ";
-//            cout << iter->second << endl;
             uint8_t _ = read_bits(i);
             return iter->second;
         }
@@ -1064,71 +944,6 @@ void Decoder::coded_block_pattern() {
             break;
         }
     }
-}
-
-void Decoder::dct_coeff_first() {
-    int run = 0;
-    int level = 0;
-    // Get run and level from mapping
-    // debug
-    cout << "            [ Info ] : in `dct_coeff_first()` function ..." << endl;    
-    uint32_t nbs28 = nextbits(28);
-    for (int i=1; i<29; i++) {
-        string s = bitset<28>(nbs28).to_string();
-        s = s.substr(0, i);
-        // debug
-        cout << "                --> searching i = " << i;
-        cout << " (string : " << s << ")" << endl;
-        map<string, vector<int>>::iterator iter;
-        iter = dct_coeff_first_map.find(s);
-        if (iter !=dct_coeff_first_map.end()) {
-            // debug
-            cout << "                    --> get run : ";
-            cout << iter->second.at(0) << endl;
-            cout << "                    --> get level : ";
-            cout << iter->second.at(1) << endl;
-            uint8_t _ = read_bits(i);
-            run = iter->second.at(0);
-            level = iter->second.at(1);
-            // normal case
-            if (run != -1) {
-                // Get "s"
-                // debug
-                cout << "            dct_coeff_first: ";
-                dct_zz_i = run;
-                int s = read_bits(1);
-                if (s == 0) {
-                    dct_zz.at(dct_zz_i) = level;
-                    // debug
-                    cout << "Run: " << run;
-                    cout << " Level: ";
-                    cout << dec << level << endl;
-                } else if (s == 1) {
-                    int neg_level = - level;
-                    dct_zz.at(dct_zz_i) = neg_level;
-                    // debug
-                    cout << "Run: " << run;
-                    cout << " Level: ";
-                    cout << dec << neg_level << endl;
-                }
-                // debug
-                cout << "                    --> get s : ";
-//                print_hex(s);            
-                break;
-            } else {
-                // escape case
-                run = get_escape_run();
-                level = get_escape_level();
-                dct_zz_i = run;
-                dct_zz.at(dct_zz_i) = level;
-                // debug
-                cout << "            dct_coeff_first: ";
-                cout << "ESCAPE Run: " << run;
-                cout << " Level: ";
-                cout << dec << level << endl;
-            }
-        }
-    }    
 }
 
 void Decoder::dct_coeff_first_s() {
@@ -1725,71 +1540,6 @@ void Decoder::fill_dct_zz_first(int run, int level) {
     }
 }
 
-void Decoder::dct_coeff_next() {
-    int run = 0;
-    int level = 0;
-    // Get run and level from mapping
-    // debug
-    cout << "            [ Info ] : in `dct_coeff_next()` function ..." << endl;    
-    uint32_t nbs28 = nextbits(28);  // 28
-    for (int i=2; i<29; i++) {  // 29
-        string s = bitset<28>(nbs28).to_string();
-        s = s.substr(0, i);
-        // debug
-        cout << "                --> searching i = " << i;
-        cout << " (string : " << s << ")" << endl;
-        map<string, vector<int>>::iterator iter;
-        iter = dct_coeff_next_map.find(s);
-        if (iter !=dct_coeff_next_map.end()) {
-            // debug
-            cout << "                    --> get run : ";
-            cout << dec << iter->second.at(0) << endl;
-            cout << "                    --> get level : ";
-            cout << dec << iter->second.at(1) << endl;
-            uint8_t _ = read_bits(i);
-            run = iter->second.at(0);
-            level = iter->second.at(1);
-            // normal case
-            if (run != -1) {
-                // Get "s"
-                // debug
-                cout << "            dct_coeff_next: ";
-                dct_zz_i = dct_zz_i + run +1;
-                int s = read_bits(1);
-                if (s == 0) {
-                    dct_zz.at(dct_zz_i) = level;
-                    // debug
-                    cout << "Run: " << run;
-                    cout << " Level: ";
-                    cout << dec << level << endl;
-                } else if (s == 1) {
-                    int neg_level = - level;
-                    dct_zz.at(dct_zz_i) = neg_level;
-                    // debug
-                    cout << "Run: " << run;
-                    cout << " Level: ";
-                    cout << dec << neg_level << endl;
-                }
-                // debug
-                cout << "                    --> get s : ";
-                print_hex(s);            
-                break; 
-            } else {
-                // escape case
-                run = get_escape_run();
-                level = get_escape_level();
-                dct_zz_i = dct_zz_i + run +1;
-                dct_zz.at(dct_zz_i) = level;
-                // debug
-                cout << "            dct_coeff_next: ";
-                cout << "ESCAPE Run: " << run;
-                cout << " Level: ";
-                cout << dec << level << endl;
-            }
-        }
-    }
-}
-
 void Decoder::dct_coeff_next_s() {
     uint64_t nbs64 = 0;
     uint32_t second_nbs32 = 0;
@@ -2365,20 +2115,15 @@ void Decoder::dct_coeff_next_s() {
 }
 
 void Decoder::fill_dct_zz(int run, int level) {
-//    cout << "--- Match !!! ---" << endl;
     // normal case
     if (run != -1) {
         dct_zz_i = dct_zz_i + run +1;
         int s = read_bits(1);
         if (s == 0) {
             dct_zz.at(dct_zz_i) = level;
-            // debug
-//            cout << "level : " << level << endl;
         } else if (s == 1) {
             int neg_level = - level;
-            dct_zz.at(dct_zz_i) = neg_level;
-            // debug
-//            cout << "level : " << neg_level << endl;            
+            dct_zz.at(dct_zz_i) = neg_level;          
         }
     } else {
         // escape case
@@ -2386,8 +2131,6 @@ void Decoder::fill_dct_zz(int run, int level) {
         level = get_escape_level();
         dct_zz_i = dct_zz_i + run +1;
         dct_zz.at(dct_zz_i) = level;
-        // debug
-//        cout << "level : " << level << endl;
     }  
 }
 
@@ -2409,12 +2152,10 @@ int Decoder::get_escape_level() {
             return pos_total_code;
         } else {
             // neg
-//            uint16_t tmp = ~(total_code - 1);
             uint8_t tmp_lc = ~(last8_code - 1);
             uint16_t tmp = 0;
             tmp += tmp_lc;
             int neg_total_code = - tmp;
-//            cout << "neg val : " << neg_total_code << endl;
             return neg_total_code;
         }
     } else {
@@ -2430,30 +2171,16 @@ int Decoder::get_escape_level() {
             return pos_first8_code;
         }
     }
-    
-    
-    
-    
-
 }
 
 void Decoder::reconstruct_dct(int num) {
-//    cout << "-------- dct_zz --------" << endl;
-//    for (int i=0; i<64; i++) {
-//        cout << dct_zz.at(i) << " ";
-//        if ((i+1) % 8 == 0) {
-//            cout << endl;
-//        }
-//    }
-//    cout << endl;
-
     if (mb_intra == "1") {
         int i = 0;
         for (int m=0; m<8; m++) {
             for (int n=0; n<8; n++) {
                 i = zigzag_m[m][n];
-                // dct_recon[m][n] = ( 2 * dct_zz[i] * quantizer_scale * intra_quant[m][n] ) /16;
-                dct_recon[m][n] = (dct_zz[i] * quantizer_scale * intra_quant[m][n]) >> 3;
+                dct_recon[m][n] = ( 2 * dct_zz[i] * quantizer_scale * intra_quant[m][n] ) / 16;
+                // dct_recon[m][n] = (dct_zz[i] * quantizer_scale * intra_quant[m][n]) >> 3;
                  if ( ( dct_recon[m][n] & 1 ) == 0 ) {
                      dct_recon[m][n] = dct_recon[m][n] - sign(dct_recon[m][n]);
                  }
@@ -2465,30 +2192,6 @@ void Decoder::reconstruct_dct(int num) {
                 }
             }
         }
-//        if ((num <= 3) && (num >= 0)) {
-//            // dct_recon[0][0] = dct_dc_y_past + dct_zz[0] * 8;
-//            dct_recon[0][0] = dct_dc_y_past + (dct_zz[0] << 3);
-//            dct_dc_y_past = dct_recon[0][0];
-//        } else if (num == 4) {
-//            // dct_recon[0][0] = dct_zz[0] * 8;
-//            dct_recon[0][0] = dct_zz[0] << 3;
-//            if (( mb_address - past_intra_address > 1)) {
-//                // dct_recon[0][0] = 128 * 8 + dct_recon[0][0];
-//                dct_recon[0][0] = 1024 + dct_recon[0][0];
-//            } else {
-//                dct_recon[0][0] = dct_dc_cb_past + dct_recon[0][0] ;
-//            }
-//            dct_dc_cb_past = dct_recon[0][0];
-//        } else {
-//            // dct_recon[0][0] = dct_zz[0] * 8 ;
-//            dct_recon[0][0] = dct_zz[0] << 3 ;
-//            if ((mb_address - past_intra_address > 1)) {
-//                dct_recon[0][0] = 1024 + dct_recon[0][0];
-//            } else {
-//                dct_recon[0][0] = dct_dc_cr_past + dct_recon[0][0];
-//            }
-//            dct_dc_cr_past = dct_recon[0][0];
-//        }
         switch (num) {
             case 0:
             case 1:
@@ -2521,9 +2224,9 @@ void Decoder::reconstruct_dct(int num) {
         for (int m=0; m<8; m++) {
             for (int n=0; n<8; n++) {
                 i = zigzag_m[m][n];
-                // dct_recon[m][n] = ( ( (2 * dct_zz[i]) + sign(dct_zz[i]) ) * quantizer_scale * non_intra_quant[m][n] ) / 16;
+                dct_recon[m][n] = ( ( (2 * dct_zz[i]) + sign(dct_zz[i]) ) * quantizer_scale * non_intra_quant[m][n] ) / 16;
                 // dct_recon[m][n] = ((dct_zz[i] + sign(dct_zz[i])) * quantizer_scale * non_intra_quant[m][n] ) * 0.125;
-                dct_recon[m][n] = ((dct_zz[i] + sign(dct_zz[i])) * quantizer_scale * non_intra_quant[m][n] ) >> 3;
+                // dct_recon[m][n] = ((dct_zz[i] + sign(dct_zz[i])) * quantizer_scale * non_intra_quant[m][n] ) >> 3;
                 if ( ( dct_recon[m][n] & 1 ) == 0 ) {
                     dct_recon[m][n] = dct_recon[m][n] - sign(dct_recon[m][n]);
                 }
@@ -2539,17 +2242,6 @@ void Decoder::reconstruct_dct(int num) {
             }
         }
     }
-
-//    cout << "-------- dct_recon --------" << endl;
-//    for (int i=0; i<8; i++) {
-//        for (int j=0; j<8; j++) {
-//            cout << dct_recon[i][j] << " ";
-//            if (j == 7) {
-//                cout << endl;
-//            }
-//        }
-//    }
-//    cout << endl;
 }
 
 void Decoder::idct() {
@@ -2562,17 +2254,6 @@ void Decoder::idct() {
                     idct_val += idct_table.at(x).at(i) * idct_table.at(y).at(j) * dct_recon.at(i).at(j);
                 }
             }
-//            if (picture_coding_type == 1) {
-//                if ((int)idct_val < 0) {
-//                    idct_prosessor.at(x).at(y) = 0;
-//                } else if ((int)idct_val > 255) {
-//                    idct_prosessor.at(x).at(y) = 255;
-//                } else {
-//                    idct_prosessor.at(x).at(y) = (int)idct_val;
-//                }     
-//            } else if ((picture_coding_type == 2) || (picture_coding_type == 3)) {
-//                idct_prosessor.at(x).at(y) = (int)idct_val;
-//            }
             switch (picture_coding_type) {
                 case 1:
                     if ((int)idct_val < 0) {
@@ -2591,23 +2272,162 @@ void Decoder::idct() {
         }
     }
     dct_recon = idct_prosessor;
-    // debug
-//    cout << "-------- idct --------" << endl;
-//    for (int i = 0; i < 8; i++) {
-//        cout << endl;
-//        for (int j = 0; j < 8; j++) {
-//            cout << dct_recon.at(i).at(j) << " ";
-//        }
-//    }
+    
 //    cout << endl;
-    // Pushback to pic_mb_vec
-//    if (picture_coding_type == 1) {
-//        pic_mb_vec.push_back(dct_recon);
-//    } else if ((picture_coding_type == 2) || (picture_coding_type == 3)) {
-//        mb_p_num.push_back(mb_address);
-//        mp_p_i.push_back(block_i);
-//        pic_mb_vec_p.push_back(dct_recon);
+//    for(int r=0; r<8; r++) {
+//        for (int c=0; c<8; c++) {
+//            cout << dct_recon[r][c] << " ";
+//        }
+//        cout << endl;
 //    }
+    
+    switch (picture_coding_type) {
+        case 1:
+            pic_mb_vec.push_back(dct_recon);
+            break;
+        case 2:
+        case 3:
+            mb_p_num.push_back(mb_address);
+            mp_p_i.push_back(block_i);
+            pic_mb_vec_p.push_back(dct_recon);        
+            break;
+    }
+}
+
+void Decoder::idctrow(int i) {
+    vector<int>blk(8, 0);
+    int num = 0;
+    for (int r=0; r<8; r++) {
+        for (int c=0; c<8; c++) {
+            if (r == i) {
+                blk.at(num) = dct_recon.at(r).at(c);
+                num++;
+            }
+        }
+    }
+    
+    int x0, x1, x2, x3, x4, x5, x6, x7, x8;
+    /* int16_tcut */
+    if (!((x1 = blk[4]<<11) | (x2 = blk[6]) | (x3 = blk[2]) |
+        (x4 = blk[1]) | (x5 = blk[7]) | (x6 = blk[5]) | (x7 = blk[3])))
+    {
+    dct_recon[i][0]=dct_recon[i][1]=dct_recon[i][2]=dct_recon[i][3]=dct_recon[i][4]=dct_recon[i][5]=dct_recon[i][6]=dct_recon[i][7]=blk[0]<<3;
+    return;
+    }
+
+    x0 = (blk[0]<<11) + 128; /* for proper rounding in the fourth stage */
+
+    /* first stage */
+    x8 = W7*(x4+x5);
+    x4 = x8 + (W1-W7)*x4;
+    x5 = x8 - (W1+W7)*x5;
+    x8 = W3*(x6+x7);
+    x6 = x8 - (W3-W5)*x6;
+    x7 = x8 - (W3+W5)*x7;
+
+    /* second stage */
+    x8 = x0 + x1;
+    x0 -= x1;
+    x1 = W6*(x3+x2);
+    x2 = x1 - (W2+W6)*x2;
+    x3 = x1 + (W2-W6)*x3;
+    x1 = x4 + x6;
+    x4 -= x6;
+    x6 = x5 + x7;
+    x5 -= x7;
+
+    /* third stage */
+    x7 = x8 + x3;
+    x8 -= x3;
+    x3 = x0 + x2;
+    x0 -= x2;
+    x2 = (181*(x4+x5)+128)>>8;
+    x4 = (181*(x4-x5)+128)>>8;
+
+    /* fourth stage */
+    dct_recon[i][0] = (x7+x1)>>8;
+    dct_recon[i][1] = (x3+x2)>>8;
+    dct_recon[i][2] = (x0+x4)>>8;
+    dct_recon[i][3] = (x8+x6)>>8;
+    dct_recon[i][4] = (x8-x6)>>8;
+    dct_recon[i][5] = (x0-x4)>>8;
+    dct_recon[i][6] = (x3-x2)>>8;
+    dct_recon[i][7] = (x7-x1)>>8;
+}
+
+void Decoder::idctcol(int i) {
+    vector<int>blk(8, 0);
+    int num = 0;
+    for (int r=0; r<8; r++) {
+        for (int c=0; c<8; c++) {
+            if (c == i) {
+                blk.at(num) = dct_recon.at(r).at(c);
+                num ++;
+            }
+        }
+    }    
+    int x0, x1, x2, x3, x4, x5, x6, x7, x8;
+    /* int16_tcut */
+    if (!((x1 = (blk[4]<<8)) | (x2 = blk[6]) | (x3 = blk[2]) |
+        (x4 = blk[1]) | (x5 = blk[7]) | (x6 = blk[5]) | (x7 = blk[3])))
+    {
+    dct_recon[0][i]=dct_recon[1][i]=dct_recon[2][i]=dct_recon[3][i]=dct_recon[4][i]=dct_recon[5][i]=dct_recon[6][i]=dct_recon[7][i]=
+      iclp[(blk[0]+32)>>6];
+    return;
+    }
+
+    x0 = (blk[0]<<8) + 8192;
+
+    /* first stage */
+    x8 = W7*(x4+x5) + 4;
+    x4 = (x8+(W1-W7)*x4)>>3;
+    x5 = (x8-(W1+W7)*x5)>>3;
+    x8 = W3*(x6+x7) + 4;
+    x6 = (x8-(W3-W5)*x6)>>3;
+    x7 = (x8-(W3+W5)*x7)>>3;
+    
+    /* second stage */
+    x8 = x0 + x1;
+    x0 -= x1;
+    x1 = W6*(x3+x2) + 4;
+    x2 = (x1-(W2+W6)*x2)>>3;
+    x3 = (x1+(W2-W6)*x3)>>3;
+    x1 = x4 + x6;
+    x4 -= x6;
+    x6 = x5 + x7;
+    x5 -= x7;
+
+    /* third stage */
+    x7 = x8 + x3;
+    x8 -= x3;
+    x3 = x0 + x2;
+    x0 -= x2;
+    x2 = (181*(x4+x5)+128)>>8;
+    x4 = (181*(x4-x5)+128)>>8;
+
+    /* fourth stage */
+    dct_recon[0][i] = iclp[(x7+x1)>>14];
+    dct_recon[1][i] = iclp[(x3+x2)>>14];
+    dct_recon[2][i] = iclp[(x0+x4)>>14];
+    dct_recon[3][i] = iclp[(x8+x6)>>14];
+    dct_recon[4][i] = iclp[(x8-x6)>>14];
+    dct_recon[5][i] = iclp[(x0-x4)>>14];
+    dct_recon[6][i] = iclp[(x3-x2)>>14];
+    dct_recon[7][i] = iclp[(x7-x1)>>14];
+}
+
+void Decoder::fast_idct() {
+    // Reference
+    //      inverse two dimensional DCT, Chen-Wang algorithm
+    //      (cf. IEEE ASSP-32, pp. 803-816, Aug. 1984)
+    //      (https://github.com/keithw/mympeg2enc/blob/master/idct.c#L58)
+    int i;
+    for (i=0; i<8; i++) {
+        idctrow(i);
+    }
+    for (i=0; i<8; i++) {
+        idctcol(i);
+    }
     switch (picture_coding_type) {
         case 1:
             pic_mb_vec.push_back(dct_recon);
@@ -2780,6 +2600,20 @@ void Decoder::recon_pic() {
     }
 }
 
+void Decoder::rgb2cvmat(vector<vector<int>> cv_R, vector<vector<int>> cv_G, vector<vector<int>> cv_B) {
+    Mat image(240, 320, CV_8UC3);
+    for (int r = 0; r< 240; r++)
+    {
+        for (int c = 0; c< 320; c++)
+        {
+            image.at<Vec3b>(r, c)[0] = cv_B.at(r).at(c);
+            image.at<Vec3b>(r, c)[1] = cv_G.at(r).at(c);
+            image.at<Vec3b>(r, c)[2] = cv_R.at(r).at(c);
+        }
+    }
+    imageQueue.push_back(image);
+}
+
 void Decoder::ycbcr2rgb(bool to_buffer, bool to_output) {
     int img_y_w = y_result_final.at(0).size();
     int img_y_h = y_result_final.size();
@@ -2847,108 +2681,106 @@ void Decoder::ycbcr2rgb(bool to_buffer, bool to_output) {
     }
 }
 
-void Decoder::output_img() {
-    // Declare output img class
-    BMP Bmp_image;
-    Bmp_image.SetSize(320, 240);
-    for (int r = 0; r < v_size; r++) {
-        for (int c = 0; c < h_size; c++) {
-            Bmp_image (c, r) -> Red = img_queue.at(0).at(r).at(c);
-            Bmp_image (c, r) -> Green = img_queue.at(1).at(r).at(c);
-            Bmp_image (c, r) -> Blue = img_queue.at(2).at(r).at(c);
-            Bmp_image (c, r) -> Alpha = 0;
-        }
-    }
-    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_decoder\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
-    Bmp_image.WriteToFile(wfilename.c_str());
-    img_queue.erase(img_queue.begin(), img_queue.begin()+3);
-}
-
-void Decoder::output_bmp() {
+void Decoder::ycbcr2rgb_s(bool to_buffer, bool to_output) {
     int img_y_w = y_result_final.at(0).size();
     int img_y_h = y_result_final.size();
     double R;
     double G;
     double B;
-    // Declare output img class
-    BMP Bmp_image;
-    Bmp_image.SetSize(320, 240);
-    // Bmp_image.SetBitDepth(24);
-    for (int r = 0; r < v_size; r++) {
-        for (int c = 0; c < h_size; c++) {
-            // For Cb, Cr
-            int c_r = r / 2;
-            int c_c = c / 2;
-            // Get data
-            double Y = y_result_final.at(r).at(c);
-            double Cb = cb_result_final.at(c_r).at(c_c);
-            double Cr = cr_result_final.at(c_r).at(c_c);
-
-            if (mb_intra_vec.at(r).at(c) == "1") {
-                R = Y + (1.402 * (Cr - 128));
-                G = Y - (0.344 * (Cb - 128)) - (0.714 * (Cr - 128));
-                B = Y + (1.772 * (Cb - 128));
-                
-//                if ((r == (int)(295 / 16)) && (c == (int)(295 % 16))) {
-//                    cout << "(Y, Cb, Cr) : " << Y << ", " << Cb << ", " << Cr << endl;
-//                    cout << "(R, G, B) : " << R << ", " << G << ", " << B << endl;
-//                }
-                
-            } else {
-                R = pel_R.at(r).at(c);
-                G = pel_G.at(r).at(c);
-                B = pel_B.at(r).at(c);
-//                R += ((255/219.0) * Y) + ((255/224.0) * 1.402 * Cr);
-//                G += ((255/219.0) * Y) - ((255/224.0) * 1.772 * (0.114/0.587) * Cb) - ((255/224.0) * 1.402 * (0.299/0.587) * Cr);
-//                B += ((255/219.0) * Y) + ((255/224.0) * 1.772 * Cb);
-                R += (1.164 * Y) + (1.596 * Cr);
-                G += (1.164 * Y) - (0.392 * Cb) - (0.813 * Cr);
-                B += (1.164 * Y) + (2.017 * Cb);                
+    if (to_output) {
+        Mat image(240, 320, CV_8UC3);
+        for (int r = 0; r < v_size; r++) {
+            for (int c = 0; c < h_size; c++) {
+                // For Cb, Cr
+                int c_r = r / 2;
+                int c_c = c / 2;
+                // Get data
+                double Y = y_result_final.at(r).at(c);
+                double Cb = cb_result_final.at(c_r).at(c_c);
+                double Cr = cr_result_final.at(c_r).at(c_c);
+                if (mb_intra_vec.at(r).at(c) == "1") {
+                    R = Y + (1.402 * (Cr - 128));
+                    G = Y - (0.344 * (Cb - 128)) - (0.714 * (Cr - 128));
+                    B = Y + (1.772 * (Cb - 128));
+                } else {
+                    R = pel_R.at(r).at(c);
+                    G = pel_G.at(r).at(c);
+                    B = pel_B.at(r).at(c);
+                    R += (1.164 * Y) + (1.596 * Cr);
+                    G += (1.164 * Y) - (0.392 * Cb) - (0.813 * Cr);
+                    B += (1.164 * Y) + (2.017 * Cb);
+                }
+                // Clip range to 0 - 255
+                if (R < 0) {
+                    R = 0;
+                } else if (R > 255) {
+                    R = 255;
+                }
+                if (G < 0) {
+                    G = 0;
+                } else if (G > 255) {
+                    G = 255;
+                }
+                if (B < 0) {
+                    B = 0;
+                } else if (B > 255) {
+                    B = 255;
+                }
+                // update pel_past
+                image.at<Vec3b>(r, c)[0] = (int)B;
+                image.at<Vec3b>(r, c)[1] = (int)G;
+                image.at<Vec3b>(r, c)[2] = (int)R;
             }
-            
-            // Process range to 0 - 255
-            if (R < 0) {
-                R = 0;
-            } else if (R > 255) {
-                R = 255;
+        }
+        imageQueue.push_back(image);
+    }
+    if (to_buffer) {
+        for (int r = 0; r < v_size; r++) {
+            for (int c = 0; c < h_size; c++) {
+                // For Cb, Cr
+                int c_r = r / 2;
+                int c_c = c / 2;
+                // Get data
+                double Y = y_result_final.at(r).at(c);
+                double Cb = cb_result_final.at(c_r).at(c_c);
+                double Cr = cr_result_final.at(c_r).at(c_c);
+                if (mb_intra_vec.at(r).at(c) == "1") {
+                    R = Y + (1.402 * (Cr - 128));
+                    G = Y - (0.344 * (Cb - 128)) - (0.714 * (Cr - 128));
+                    B = Y + (1.772 * (Cb - 128));
+                } else {
+                    R = pel_R.at(r).at(c);
+                    G = pel_G.at(r).at(c);
+                    B = pel_B.at(r).at(c);
+                    R += (1.164 * Y) + (1.596 * Cr);
+                    G += (1.164 * Y) - (0.392 * Cb) - (0.813 * Cr);
+                    B += (1.164 * Y) + (2.017 * Cb);
+                }
+                // Clip range to 0 - 255
+                if (R < 0) {
+                    R = 0;
+                } else if (R > 255) {
+                    R = 255;
+                }
+                if (G < 0) {
+                    G = 0;
+                } else if (G > 255) {
+                    G = 255;
+                }
+                if (B < 0) {
+                    B = 0;
+                } else if (B > 255) {
+                    B = 255;
+                }
+                // update pel_past
+                pel_past_R.at(r).at(c) = (int)R;
+                pel_past_G.at(r).at(c) = (int)G;
+                pel_past_B.at(r).at(c) = (int)B;
             }
-            if (G < 0) {
-                G = 0;
-            } else if (G > 255) {
-                G = 255;
-            }
-            if (B < 0) {
-                B = 0;
-            } else if (B > 255) {
-                B = 255;
-            }
-            Bmp_image (c, r) -> Red = R;
-            Bmp_image (c, r) -> Green = G;
-            Bmp_image (c, r) -> Blue = B;
-            Bmp_image (c, r) -> Alpha = 0;
-            // update pel_past
-            pel_past_R.at(r).at(c) = (int)R;
-            pel_past_G.at(r).at(c) = (int)G;
-            pel_past_B.at(r).at(c) = (int)B;
         }
     }
-    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_decoder\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
-    Bmp_image.WriteToFile(wfilename.c_str());
 }
 
-void Decoder::rgb2cvmat(vector<vector<int>> cv_R, vector<vector<int>> cv_G, vector<vector<int>> cv_B) {
-    Mat image(240, 320, CV_8UC3);
-    for (int r = 0; r< 240; r++)
-    {
-        for (int c = 0; c< 320; c++)
-        {
-            image.at<Vec3b>(r, c)[0] = cv_B.at(r).at(c);
-            image.at<Vec3b>(r, c)[1] = cv_G.at(r).at(c);
-            image.at<Vec3b>(r, c)[2] = cv_R.at(r).at(c);
-        }
-    }
-    imageQueue.push_back(image);
-}
 
 // Reconstruct P-frame
 void Decoder::cal_motion_vector_p() {
@@ -3099,84 +2931,52 @@ void Decoder::decode_mv() {
 
             if (mb_motion_forward == "1") {
                 int pel_future_r = pel_r + down_for;
-                int pel_future_c = pel_c + right_for;
-//                cout << "(i, j) : " << i << ", " << j << endl;
-//                cout << "(pel_r , pel_c) : " << pel_r << ", " << pel_c << endl;
-//                cout << "(down_for, right_for) : " << down_for << ", " << right_for << endl;
-//                cout << "(pel_past_r , pel_past_c) : " << pel_future_r << ", " << pel_future_c << endl;                
+                int pel_future_c = pel_c + right_for;              
                 if ( ! right_half_for && ! down_half_for ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
                     R_for = pel_future_R.at(pel_future_r).at(pel_future_c);
                     G_for = pel_future_G.at(pel_future_r).at(pel_future_c);
                     B_for = pel_future_B.at(pel_future_r).at(pel_future_c);
-//                    pel_R.at(pel_r).at(pel_c) = pel_future_R.at(pel_future_r).at(pel_future_c);
-//                    pel_G.at(pel_r).at(pel_c) = pel_future_G.at(pel_future_r).at(pel_future_c);
-//                    pel_B.at(pel_r).at(pel_c) = pel_future_B.at(pel_future_r).at(pel_future_c);
                 } else if ( ! right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
                     R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c)) / 2);
                     G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c)) / 2);
                     B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c)) / 2);
-//                    pel_R.at(pel_r).at(pel_c) = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c)) / 2);
-//                    pel_G.at(pel_r).at(pel_c) = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c)) / 2);
-//                    pel_B.at(pel_r).at(pel_c) = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c)) / 2);
                 } else if ( right_half_for && ! down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
                     R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1)) / 2);
                     G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1)) / 2);
                     B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1)) / 2);
-//                    pel_R.at(pel_r).at(pel_c) = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1)) / 2);
-//                    pel_G.at(pel_r).at(pel_c) = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1)) / 2);
-//                    pel_B.at(pel_r).at(pel_c) = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1)) / 2);
                 } else if ( right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;                
                     R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1) + pel_future_R.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
                     G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1) + pel_future_G.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
                     B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1) + pel_future_B.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-//                    pel_R.at(pel_r).at(pel_c) = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1) + pel_future_R.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-//                    pel_G.at(pel_r).at(pel_c) = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1) + pel_future_G.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-//                    pel_B.at(pel_r).at(pel_c) = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1) + pel_future_B.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
                 }
             }
             if (mb_motion_backward == "1") {
                 int pel_past_r = pel_r + down_bac;
-                int pel_past_c = pel_c + right_bac; 
-//                cout << "(i, j) : " << i << ", " << j << endl;
-//                cout << "(pel_r , pel_c) : " << pel_r << ", " << pel_c << endl;
-//                cout << "(down_bac, right_bac) : " << down_bac << ", " << right_bac << endl;
-//                cout << "(pel_past_r , pel_past_c) : " << pel_past_r << ", " << pel_past_c << endl;                  
+                int pel_past_c = pel_c + right_bac;               
                 if ( ! right_half_bac && ! down_half_bac ) {             
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
                     R_bac = pel_past_R.at(pel_past_r).at(pel_past_c);
                     G_bac = pel_past_G.at(pel_past_r).at(pel_past_c);
                     B_bac = pel_past_B.at(pel_past_r).at(pel_past_c);
-//                    pel_R.at(pel_r).at(pel_c) = pel_past_R.at(pel_past_r).at(pel_past_c);
-//                    pel_G.at(pel_r).at(pel_c) = pel_past_G.at(pel_past_r).at(pel_past_c);
-//                    pel_B.at(pel_r).at(pel_c) = pel_past_B.at(pel_past_r).at(pel_past_c);
                 } else if ( ! right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);                    
-//                    pel_R.at(pel_r).at(pel_c) = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
-//                    pel_G.at(pel_r).at(pel_c) = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
-//                    pel_B.at(pel_r).at(pel_c) = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);
+                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);
                 } else if ( right_half_bac && ! down_half_bac ) {       
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1)) / 2);                    
-//                    pel_R.at(pel_r).at(pel_c) = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
-//                    pel_G.at(pel_r).at(pel_c) = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
-//                    pel_B.at(pel_r).at(pel_c) = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1)) / 2);
+                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1)) / 2);
                 } else if ( right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1) + pel_past_R.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1) + pel_past_G.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1) + pel_past_B.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-//                    pel_R.at(pel_r).at(pel_c) = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1) + pel_past_R.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-//                    pel_G.at(pel_r).at(pel_c) = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1) + pel_past_G.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-//                    pel_B.at(pel_r).at(pel_c) = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1) + pel_past_B.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);                    
+                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1) + pel_past_B.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);              
                 }
             }
             if ((mb_motion_forward == "1") && (mb_motion_backward == "0")) {
