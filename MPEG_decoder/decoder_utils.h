@@ -167,12 +167,6 @@ private:
     vector<vector<int>> pel_future_R;
     vector<vector<int>> pel_future_G;
     vector<vector<int>> pel_future_B;
-//    int pel_past_R [240][320];
-//    int pel_past_G [240][320];
-//    int pel_past_B [240][320];
-//    int pel_future_R [240][320];
-//    int pel_future_G [240][320];
-//    int pel_future_B [240][320];
     int pel_R [240][320];
     int pel_G [240][320];
     int pel_B [240][320];
@@ -250,8 +244,6 @@ public:
     int sign(int num);
     void load_intra_quant();
     void load_non_intra_quant();
-    void print_hex(unsigned int code);
-    void print_dec(unsigned int code);
     void output_img();
     void output_img_mat();
     // ---> check start & end code
@@ -278,7 +270,6 @@ public:
     // Reconstruct I-frame
     void coded_block_pattern();
     void dct_coeff_first_s();
-    void dct_coeff_next_s();
     void dct_coeff_next_s3();
     void fill_dct_zz(int run, int level);
     void fill_dct_zz_first(int run, int level);
@@ -296,7 +287,6 @@ public:
     // Reconstruct P-frame
     void cal_motion_vector_p();
     void decode_mv_s();
-    void decode_mv_s_a();
     // Reconstruct B-frame
     void cal_motion_vector_b();
 

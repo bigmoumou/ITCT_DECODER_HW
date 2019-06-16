@@ -30,13 +30,6 @@ Decoder::Decoder() :
     image(240, 320, CV_8UC3),
     imageQ(240, 320, CV_8UC3),
     fut_image(240, 320, CV_8UC3) {
-    // init
-//    memset(pel_past_R, 0, sizeof(pel_past_R));
-//    memset(pel_past_G, 0, sizeof(pel_past_G));
-//    memset(pel_past_B, 0, sizeof(pel_past_B));
-//    memset(pel_future_R, 0, sizeof(pel_future_R));
-//    memset(pel_future_G, 0, sizeof(pel_future_G));
-//    memset(pel_future_B, 0, sizeof(pel_future_B));
     // new fast idct
     iclp = iclip+512;
     for (int i= -512; i<512; i++) {
@@ -201,7 +194,7 @@ void Decoder::slice() {
 void Decoder::macroblock() {
     // reset macroblock intra flag
     mb_intra = "0";
-    // reset tmp
+    // reset tmp Y, Cb, Cr
     memset(y_tmp, 0, sizeof(y_tmp));
     memset(cb_tmp, 0, sizeof(cb_tmp));
     memset(cr_tmp, 0, sizeof(cr_tmp));
@@ -238,12 +231,10 @@ void Decoder::macroblock() {
             recon_right_for_prev = 0;
             recon_down_for_prev = 0;
              decode_mv_s();
-//            decode_mv_s_a();
             // recon_image_skip();
             recon_image_skip_p();
         } else if (picture_coding_type == 3) {
              decode_mv_s();
-//            decode_mv_s_a();
             // recon_image_skip();
             recon_image_skip_b();
         }
@@ -317,9 +308,7 @@ void Decoder::macroblock() {
     }
     // init dct dc past
     if (mb_intra == "0") {
-        // decode_mv();
          decode_mv_s();
-//        decode_mv_s_a();
     }
     // update cbp
     if (mb_pattern == "1") {
@@ -410,7 +399,7 @@ int Decoder::sign(int num) {
 void Decoder::load_intra_quant() {
     for (int i=0; i<8; i++) {
         for (int j=0; j<8; j++) {
-            intra_quant.at(i).at(j) = read_bits(8);
+            intra_quant[i][j] = read_bits(8);
         }
     }
 }
@@ -418,17 +407,9 @@ void Decoder::load_intra_quant() {
 void Decoder::load_non_intra_quant() {
     for (int i=0; i<8; i++) {
         for (int j=0; j<8; j++) {
-            non_intra_quant.at(i).at(j) = read_bits(8);
+            non_intra_quant[i][j] = read_bits(8);
         }
     }
-}
-
-void Decoder::print_hex(unsigned int code) {
-    cout << hex << code << endl;
-}
-
-void Decoder::print_dec(unsigned int code) {
-    cout << dec << code << endl;
 }
 
 void Decoder::output_img() {
@@ -467,7 +448,8 @@ void Decoder::output_img_mat() {
 void Decoder::next_start_code() {
     uint32_t next_buf = 0;
     for (int i=0; i<4; i++) {
-        next_buf = (next_buf << 8) + (que_buf.at(i));
+        // next_buf = (next_buf << 8) + (que_buf.at(i));
+        next_buf = (next_buf << 8) + (que_buf[i]);
     }
     if ((next_buf >> 8) == 0x1) {
         zero_byte_flag = true;
@@ -514,7 +496,8 @@ uint32_t Decoder::nextbits(int num) {
         total_rem = 0;
         if (buf_cursor == 0) {
             // update buffer
-            uint8_t tmp_buf = que_buf.at(i);
+            // uint8_t tmp_buf = que_buf.at(i);
+            uint8_t tmp_buf = que_buf[i];
             i += 1;
             bit32 = (bit32 << num) + (tmp_buf >> (8 - num));
         } else {
@@ -526,7 +509,8 @@ uint32_t Decoder::nextbits(int num) {
             // update total_rem
             total_rem -= 8;                    
             // read 8-bit * 1
-            bit32 = (bit32 << 8) + que_buf.at(i);
+            // bit32 = (bit32 << 8) + que_buf.at(i);
+            bit32 = (bit32 << 8) + que_buf[i];
             i += 1;
         } else {
             // update total_rem
@@ -543,12 +527,14 @@ uint32_t Decoder::nextbits(int num) {
         // update total_rem
         total_rem -= 8;
         // read 8-bit * N
-        bit32 = (bit32 << 8) + que_buf.at(i);
+        // bit32 = (bit32 << 8) + que_buf.at(i);
+        bit32 = (bit32 << 8) + que_buf[i];
     }
     // Last
     if (total_rem > 0) {
         // update buffer
-        uint8_t tmp_buf = que_buf.at(i);
+        // uint8_t tmp_buf = que_buf.at(i);
+        uint8_t tmp_buf = que_buf[i];
         bit32 = (bit32 << total_rem) + (tmp_buf >> (8 - total_rem));
     }
     return bit32;  
@@ -565,7 +551,8 @@ uint32_t Decoder::read_bits(int num) {
         total_rem = 0;        
         if (buf_cursor == 0) {
             // update buffer
-            buf = que_buf.at(0);
+            // buf = que_buf.at(0);
+            buf = que_buf[0];
             bit32 = (bit32 << num) + (buf >> (8 - num));
             que_buf.pop_front();
         } else {
@@ -577,7 +564,8 @@ uint32_t Decoder::read_bits(int num) {
             // update total_rem
             total_rem -= 8;
             // read 8-bit * 1
-            bit32 = (bit32 << 8) + que_buf.at(0);
+            // bit32 = (bit32 << 8) + que_buf.at(0);
+            bit32 = (bit32 << 8) + que_buf[0];
             que_buf.pop_front();
         } else {
             // update total_rem
@@ -594,13 +582,15 @@ uint32_t Decoder::read_bits(int num) {
         // update total_rem
         total_rem -= 8;
         // read 8-bit * N
-        bit32 = (bit32 << 8) + que_buf.at(0);
+        // bit32 = (bit32 << 8) + que_buf.at(0);
+        bit32 = (bit32 << 8) + que_buf[0];
         que_buf.pop_front();
     }
     // Last
     if (total_rem > 0) {
         // update buffer
-        buf = que_buf.at(0);
+        // buf = que_buf.at(0);
+        buf = que_buf[0];
         bit32 = (bit32 << total_rem) + (buf >> (8 - total_rem));
         que_buf.pop_front();
     }
@@ -626,21 +616,21 @@ int Decoder::get_cur_pos(int cur_pos, int num) {
 void Decoder::update_pattern_code(vector<int> & pattern_code) {
     // update pattern code
     for (int i=0; i<6; i++) {
-        pattern_code.at(i) = 0;
+        pattern_code[i] = 0;
         if (cbp & (1 << (5-i))) {
-            pattern_code.at(i) = 1;
+            pattern_code[i] = 1;
         }
         if (mb_intra == "1") {
-            pattern_code.at(i) = 1;
+            pattern_code[i] = 1;
         }
     }
     // debug
     if (mb_pattern == "1") {
         uint8_t _tmp = 0;
         for (int i=0; i<6; i++) {
-            if (pattern_code.at(i) == 0) {
+            if (pattern_code[i] == 0) {
                 _tmp = (_tmp << 1) + 0;
-            } else if (pattern_code.at(i) == 1) {
+            } else if (pattern_code[i] == 1) {
                 _tmp = (_tmp << 1) + 1;
             }
         }
@@ -1698,591 +1688,20 @@ void Decoder::fill_dct_zz_first(int run, int level) {
         dct_zz_i = run;
         int s = read_bits(1);
         if (s == 0) {
-            dct_zz.at(dct_zz_i) = level;
+            // dct_zz.at(dct_zz_i) = level;
+            dct_zz[dct_zz_i] = level;
         } else if (s == 1) {
             int neg_level = - level;
-            dct_zz.at(dct_zz_i) = neg_level;
+            // dct_zz.at(dct_zz_i) = neg_level;
+            dct_zz[dct_zz_i] = neg_level;
         }
     } else {
         // escape case
         run = get_escape_run();
         level = get_escape_level();
         dct_zz_i = run;
-        dct_zz.at(dct_zz_i) = level;
-    }
-}
-
-void Decoder::dct_coeff_next_s() {
-    uint64_t nbs64 = 0;
-    uint32_t second_nbs32 = 0;
-    for (int i=2; i<29; i++) {
-        second_nbs32 = nextbits(i);
-        nbs64 = i;
-        nbs64 = (nbs64 << 32) + second_nbs32;
-        // Lookup table via switch optimization
-        uint8_t _ = 0;
-        switch (nbs64) {
-            case 0x1000000010:
-                _ = read_bits(i);
-                fill_dct_zz(1, 18);
-                i = 29;
-                break;
-            case 0x1000000011:
-                _ = read_bits(i);
-                fill_dct_zz(1, 17);
-                i = 29;
-                break;
-            case 0x1000000012:
-                _ = read_bits(i);
-                fill_dct_zz(1, 16);
-                i = 29;
-                break;
-            case 0x1000000013:
-                _ = read_bits(i);
-                fill_dct_zz(1, 15);
-                i = 29;
-                break;
-            case 0x1000000014:
-                _ = read_bits(i);
-                fill_dct_zz(6, 3);
-                i = 29;
-                break;
-            case 0x1000000015:
-                _ = read_bits(i);
-                fill_dct_zz(16, 2);
-                i = 29;
-                break;
-            case 0x1000000016:
-                _ = read_bits(i);
-                fill_dct_zz(15, 2);
-                i = 29;
-                break;
-            case 0x1000000017:
-                _ = read_bits(i);
-                fill_dct_zz(14, 2);
-                i = 29;
-                break;
-            case 0x1000000018:
-                _ = read_bits(i);
-                fill_dct_zz(13, 2);
-                i = 29;
-                break;
-            case 0x1000000019:
-                _ = read_bits(i);
-                fill_dct_zz(12, 2);
-                i = 29;
-                break;
-            case 0x100000001a:
-                _ = read_bits(i);
-                fill_dct_zz(11, 2);
-                i = 29;
-                break;
-            case 0x100000001b:
-                _ = read_bits(i);
-                fill_dct_zz(31, 1);
-                i = 29;
-                break;
-            case 0x100000001c:
-                _ = read_bits(i);
-                fill_dct_zz(30, 1);
-                i = 29;
-                break;
-            case 0x100000001d:
-                _ = read_bits(i);
-                fill_dct_zz(29, 1);
-                i = 29;
-                break;
-            case 0x100000001e:
-                _ = read_bits(i);
-                fill_dct_zz(28, 1);
-                i = 29;
-                break;
-            case 0x100000001f:
-                _ = read_bits(i);
-                fill_dct_zz(27, 1);
-                i = 29;
-                break;
-            case 0xf00000010:
-                _ = read_bits(i);
-                fill_dct_zz(0, 40);
-                i = 29;
-                break;
-            case 0xf00000011:
-                _ = read_bits(i);
-                fill_dct_zz(0, 39);
-                i = 29;
-                break;
-            case 0xf00000012:
-                _ = read_bits(i);
-                fill_dct_zz(0, 38);
-                i = 29;
-                break;
-            case 0xf00000013:
-                _ = read_bits(i);
-                fill_dct_zz(0, 37);
-                i = 29;
-                break;
-            case 0xf00000014:
-                _ = read_bits(i);
-                fill_dct_zz(0, 36);
-                i = 29;
-                break;
-            case 0xf00000015:
-                _ = read_bits(i);
-                fill_dct_zz(0, 35);
-                i = 29;
-                break;
-            case 0xf00000016:
-                _ = read_bits(i);
-                fill_dct_zz(0, 34);
-                i = 29;
-                break;
-            case 0xf00000017:
-                _ = read_bits(i);
-                fill_dct_zz(0, 33);
-                i = 29;
-                break;
-            case 0xf00000018:
-                _ = read_bits(i);
-                fill_dct_zz(0, 32);
-                i = 29;
-                break;
-            case 0xf00000019:
-                _ = read_bits(i);
-                fill_dct_zz(1, 14);
-                i = 29;
-                break;
-            case 0xf0000001a:
-                _ = read_bits(i);
-                fill_dct_zz(1, 13);
-                i = 29;
-                break;
-            case 0xf0000001b:
-                _ = read_bits(i);
-                fill_dct_zz(1, 12);
-                i = 29;
-                break;
-            case 0xf0000001c:
-                _ = read_bits(i);
-                fill_dct_zz(1, 11);
-                i = 29;
-                break;
-            case 0xf0000001d:
-                _ = read_bits(i);
-                fill_dct_zz(1, 10);
-                i = 29;
-                break;
-            case 0xf0000001e:
-                _ = read_bits(i);
-                fill_dct_zz(1, 9);
-                i = 29;
-                break;
-            case 0xf0000001f:
-                _ = read_bits(i);
-                fill_dct_zz(1, 8);
-                i = 29;
-                break;
-            case 0xe00000010:
-                _ = read_bits(i);
-                fill_dct_zz(0, 31);
-                i = 29;
-                break;
-            case 0xe00000011:
-                _ = read_bits(i);
-                fill_dct_zz(0, 30);
-                i = 29;
-                break;
-            case 0xe00000012:
-                _ = read_bits(i);
-                fill_dct_zz(0, 29);
-                i = 29;
-                break;
-            case 0xe00000013:
-                _ = read_bits(i);
-                fill_dct_zz(0, 28);
-                i = 29;
-                break;
-            case 0xe00000014:
-                _ = read_bits(i);
-                fill_dct_zz(0, 27);
-                i = 29;
-                break;
-            case 0xe00000015:
-                _ = read_bits(i);
-                fill_dct_zz(0, 26);
-                i = 29;
-                break;
-            case 0xe00000016:
-                _ = read_bits(i);
-                fill_dct_zz(0, 25);
-                i = 29;
-                break;
-            case 0xe00000017:
-                _ = read_bits(i);
-                fill_dct_zz(0, 24);
-                i = 29;
-                break;
-            case 0xe00000018:
-                _ = read_bits(i);
-                fill_dct_zz(0, 23);
-                i = 29;
-                break;
-            case 0xe00000019:
-                _ = read_bits(i);
-                fill_dct_zz(0, 22);
-                i = 29;
-                break;
-            case 0xe0000001a:
-                _ = read_bits(i);
-                fill_dct_zz(0, 21);
-                i = 29;
-                break;
-            case 0xe0000001b:
-                _ = read_bits(i);
-                fill_dct_zz(0, 20);
-                i = 29;
-                break;
-            case 0xe0000001c:
-                _ = read_bits(i);
-                fill_dct_zz(0, 19);
-                i = 29;
-                break;
-            case 0xe0000001d:
-                _ = read_bits(i);
-                fill_dct_zz(0, 18);
-                i = 29;
-                break;
-            case 0xe0000001e:
-                _ = read_bits(i);
-                fill_dct_zz(0, 17);
-                i = 29;
-                break;
-            case 0xe0000001f:
-                _ = read_bits(i);
-                fill_dct_zz(0, 16);
-                i = 29;
-                break;
-            case 0xd00000010:
-                _ = read_bits(i);
-                fill_dct_zz(10, 2);
-                i = 29;
-                break;
-            case 0xd00000011:
-                _ = read_bits(i);
-                fill_dct_zz(9, 2);
-                i = 29;
-                break;
-            case 0xd00000012:
-                _ = read_bits(i);
-                fill_dct_zz(5, 3);
-                i = 29;
-                break;
-            case 0xd00000013:
-                _ = read_bits(i);
-                fill_dct_zz(3, 4);
-                i = 29;
-                break;
-            case 0xd00000014:
-                _ = read_bits(i);
-                fill_dct_zz(2, 5);
-                i = 29;
-                break;
-            case 0xd00000015:
-                _ = read_bits(i);
-                fill_dct_zz(1, 7);
-                i = 29;
-                break;
-            case 0xd00000016:
-                _ = read_bits(i);
-                fill_dct_zz(1, 6);
-                i = 29;
-                break;
-            case 0xd00000017:
-                _ = read_bits(i);
-                fill_dct_zz(0, 15);
-                i = 29;
-                break;
-            case 0xd00000018:
-                _ = read_bits(i);
-                fill_dct_zz(0, 14);
-                i = 29;
-                break;
-            case 0xd00000019:
-                _ = read_bits(i);
-                fill_dct_zz(0, 13);
-                i = 29;
-                break;
-            case 0xd0000001a:
-                _ = read_bits(i);
-                fill_dct_zz(0, 12);
-                i = 29;
-                break;
-            case 0xd0000001b:
-                _ = read_bits(i);
-                fill_dct_zz(26, 1);
-                i = 29;
-                break;
-            case 0xd0000001c:
-                _ = read_bits(i);
-                fill_dct_zz(25, 1);
-                i = 29;
-                break;
-            case 0xd0000001d:
-                _ = read_bits(i);
-                fill_dct_zz(24, 1);
-                i = 29;
-                break;
-            case 0xd0000001e:
-                _ = read_bits(i);
-                fill_dct_zz(23, 1);
-                i = 29;
-                break;
-            case 0xd0000001f:
-                _ = read_bits(i);
-                fill_dct_zz(22, 1);
-                i = 29;
-                break;
-            case 0xc00000010:
-                _ = read_bits(i);
-                fill_dct_zz(0, 11);
-                i = 29;
-                break;
-            case 0xc00000011:
-                _ = read_bits(i);
-                fill_dct_zz(8, 2);
-                i = 29;
-                break;
-            case 0xc00000012:
-                _ = read_bits(i);
-                fill_dct_zz(4, 3);
-                i = 29;
-                break;
-            case 0xc00000013:
-                _ = read_bits(i);
-                fill_dct_zz(0, 10);
-                i = 29;
-                break;
-            case 0xc00000014:
-                _ = read_bits(i);
-                fill_dct_zz(2, 4);
-                i = 29;
-                break;
-            case 0xc00000015:
-                _ = read_bits(i);
-                fill_dct_zz(7, 2);
-                i = 29;
-                break;
-            case 0xc00000016:
-                _ = read_bits(i);
-                fill_dct_zz(21, 1);
-                i = 29;
-                break;
-            case 0xc00000017:
-                _ = read_bits(i);
-                fill_dct_zz(20, 1);
-                i = 29;
-                break;
-            case 0xc00000018:
-                _ = read_bits(i);
-                fill_dct_zz(0, 9);
-                i = 29;
-                break;
-            case 0xc00000019:
-                _ = read_bits(i);
-                fill_dct_zz(19, 1);
-                i = 29;
-                break;
-            case 0xc0000001a:
-                _ = read_bits(i);
-                fill_dct_zz(18, 1);
-                i = 29;
-                break;
-            case 0xc0000001b:
-                _ = read_bits(i);
-                fill_dct_zz(1, 5);
-                i = 29;
-                break;
-            case 0xc0000001c:
-                _ = read_bits(i);
-                fill_dct_zz(3, 3);
-                i = 29;
-                break;
-            case 0xc0000001d:
-                _ = read_bits(i);
-                fill_dct_zz(0, 8);
-                i = 29;
-                break;
-            case 0xc0000001e:
-                _ = read_bits(i);
-                fill_dct_zz(6, 2);
-                i = 29;
-                break;
-            case 0xc0000001f:
-                _ = read_bits(i);
-                fill_dct_zz(17, 1);
-                i = 29;
-                break;
-            case 0xa00000008:
-                _ = read_bits(i);
-                fill_dct_zz(16, 1);
-                i = 29;
-                break;
-            case 0xa00000009:
-                _ = read_bits(i);
-                fill_dct_zz(5, 2);
-                i = 29;
-                break;
-            case 0xa0000000a:
-                _ = read_bits(i);
-                fill_dct_zz(0, 7);
-                i = 29;
-                break;
-            case 0xa0000000b:
-                _ = read_bits(i);
-                fill_dct_zz(2, 3);
-                i = 29;
-                break;
-            case 0xa0000000c:
-                _ = read_bits(i);
-                fill_dct_zz(1, 4);
-                i = 29;
-                break;
-            case 0xa0000000d:
-                _ = read_bits(i);
-                fill_dct_zz(15, 1);
-                i = 29;
-                break;
-            case 0xa0000000e:
-                _ = read_bits(i);
-                fill_dct_zz(14, 1);
-                i = 29;
-                break;
-            case 0xa0000000f:
-                _ = read_bits(i);
-                fill_dct_zz(4, 2);
-                i = 29;
-                break;
-            case 0x600000001:
-                _ = read_bits(i);
-                fill_dct_zz(-1, -1);
-                i = 29;
-                break;
-            case 0x700000004:
-                _ = read_bits(i);
-                fill_dct_zz(2, 2);
-                i = 29;
-                break;
-            case 0x700000005:
-                _ = read_bits(i);
-                fill_dct_zz(9, 1);
-                i = 29;
-                break;
-            case 0x700000006:
-                _ = read_bits(i);
-                fill_dct_zz(0, 4);
-                i = 29;
-                break;
-            case 0x700000007:
-                _ = read_bits(i);
-                fill_dct_zz(8, 1);
-                i = 29;
-                break;
-            case 0x600000004:
-                _ = read_bits(i);
-                fill_dct_zz(7, 1);
-                i = 29;
-                break;
-            case 0x600000005:
-                _ = read_bits(i);
-                fill_dct_zz(6, 1);
-                i = 29;
-                break;
-            case 0x600000006:
-                _ = read_bits(i);
-                fill_dct_zz(1, 2);
-                i = 29;
-                break;
-            case 0x600000007:
-                _ = read_bits(i);
-                fill_dct_zz(5, 1);
-                i = 29;
-                break;
-            case 0x800000020:
-                _ = read_bits(i);
-                fill_dct_zz(13, 1);
-                i = 29;
-                break;
-            case 0x800000021:
-                _ = read_bits(i);
-                fill_dct_zz(0, 6);
-                i = 29;
-                break;
-            case 0x800000022:
-                _ = read_bits(i);
-                fill_dct_zz(12, 1);
-                i = 29;
-                break;
-            case 0x800000023:
-                _ = read_bits(i);
-                fill_dct_zz(11, 1);
-                i = 29;
-                break;
-            case 0x800000024:
-                _ = read_bits(i);
-                fill_dct_zz(3, 2);
-                i = 29;
-                break;
-            case 0x800000025:
-                _ = read_bits(i);
-                fill_dct_zz(1, 3);
-                i = 29;
-                break;
-            case 0x800000026:
-                _ = read_bits(i);
-                fill_dct_zz(0, 5);
-                i = 29;
-                break;
-            case 0x800000027:
-                _ = read_bits(i);
-                fill_dct_zz(10, 1);
-                i = 29;
-                break;
-            case 0x500000005:
-                _ = read_bits(i);
-                fill_dct_zz(0, 3);
-                i = 29;
-                break;
-            case 0x500000006:
-                _ = read_bits(i);
-                fill_dct_zz(4, 1);
-                i = 29;
-                break;
-            case 0x500000007:
-                _ = read_bits(i);
-                fill_dct_zz(3, 1);
-                i = 29;
-                break;
-            case 0x400000004:
-                _ = read_bits(i);
-                fill_dct_zz(0, 2);
-                i = 29;
-                break;
-            case 0x400000005:
-                _ = read_bits(i);
-                fill_dct_zz(2, 1);
-                i = 29;
-                break;
-            case 0x300000003:
-                _ = read_bits(i);
-                fill_dct_zz(1, 1);
-                i = 29;
-                break;
-            case 0x200000003:
-                _ = read_bits(i);
-                fill_dct_zz(0, 1);
-                i = 29;
-                break;
-        }
+        // dct_zz.at(dct_zz_i) = level;
+        dct_zz[dct_zz_i] = level;
     }
 }
 
@@ -2864,17 +2283,20 @@ void Decoder::fill_dct_zz(int run, int level) {
         dct_zz_i = dct_zz_i + run +1;
         int s = read_bits(1);
         if (s == 0) {
-            dct_zz.at(dct_zz_i) = level;
+            // dct_zz.at(dct_zz_i) = level;
+            dct_zz[dct_zz_i] = level;
         } else if (s == 1) {
             int neg_level = - level;
-            dct_zz.at(dct_zz_i) = neg_level;          
+            // dct_zz.at(dct_zz_i) = neg_level;
+            dct_zz[dct_zz_i] = neg_level;
         }
     } else {
         // escape case
         run = get_escape_run();
         level = get_escape_level();
         dct_zz_i = dct_zz_i + run +1;
-        dct_zz.at(dct_zz_i) = level;
+        // dct_zz.at(dct_zz_i) = level;
+        dct_zz[dct_zz_i] = level;
     }  
 }
 
@@ -2924,7 +2346,6 @@ void Decoder::reconstruct_dct(int num) {
             for (int n=0; n<8; n++) {
                 i = zigzag_m[m][n];
                 dct_recon[m][n] = ( 2 * dct_zz[i] * quantizer_scale * intra_quant[m][n] ) / 16;
-                // dct_recon[m][n] = (dct_zz[i] * quantizer_scale * intra_quant[m][n]) >> 3;
                  if ( ( dct_recon[m][n] & 1 ) == 0 ) {
                      dct_recon[m][n] = dct_recon[m][n] - sign(dct_recon[m][n]);
                  }
@@ -2969,7 +2390,6 @@ void Decoder::reconstruct_dct(int num) {
             for (int n=0; n<8; n++) {
                 i = zigzag_m[m][n];
                 dct_recon[m][n] = ( ( (2 * dct_zz[i]) + sign(dct_zz[i]) ) * quantizer_scale * non_intra_quant[m][n] ) / 16;
-                // dct_recon[m][n] = ((dct_zz[i] + sign(dct_zz[i])) * quantizer_scale * non_intra_quant[m][n] ) >> 3;
                 if ( ( dct_recon[m][n] & 1 ) == 0 ) {
                     dct_recon[m][n] = dct_recon[m][n] - sign(dct_recon[m][n]);
                 }
@@ -3135,9 +2555,9 @@ void Decoder::fast_idct() {
             for (int i=0; i<8; i++) {
                 for (int j=0; j<8; j++) {
                     if (dct_recon[i][j] < 0) {
-                        dct_recon.at(i).at(j) = 0;
+                        dct_recon[i][j] = 0;
                     } else if (dct_recon[i][j] > 255) {
-                        dct_recon.at(i).at(j) = 255;
+                        dct_recon[i][j] = 255;
                     }
                 }
             }
@@ -3172,42 +2592,42 @@ void Decoder::collect_mbs() {
         case 0:
             for (int r=0; r<8; r++) {
                 for (int c=0; c<8; c++) {
-                    y_tmp[r][c] = dct_recon.at(r).at(c);
+                    y_tmp[r][c] = dct_recon[r][c];
                 }
             }
             break;
         case 1:
             for (int r=0; r<8; r++) {
                 for (int c=0; c<8; c++) {
-                    y_tmp[r][c + 8] = dct_recon.at(r).at(c);
+                    y_tmp[r][c + 8] = dct_recon[r][c];
                 }
             }
             break;
         case 2:
             for (int r=0; r<8; r++) {
                 for (int c=0; c<8; c++) {
-                    y_tmp[r + 8][c] = dct_recon.at(r).at(c);
+                    y_tmp[r + 8][c] = dct_recon[r][c];
                 }
             }
             break;
         case 3:
             for (int r=0; r<8; r++) {
                 for (int c=0; c<8; c++) {
-                    y_tmp[r + 8][c + 8] = dct_recon.at(r).at(c);
+                    y_tmp[r + 8][c + 8] = dct_recon[r][c];
                 }
             }
             break;
         case 4:
             for (int r=0; r<8; r++) {
                 for (int c=0; c<8; c++) {
-                    cb_tmp[r][c] = dct_recon.at(r).at(c);
+                    cb_tmp[r][c] = dct_recon[r][c];
                 }
             }
             break;
         case 5:
             for (int r=0; r<8; r++) {
                 for (int c=0; c<8; c++) {
-                    cr_tmp[r][c] = dct_recon.at(r).at(c);
+                    cr_tmp[r][c] = dct_recon[r][c];
                 }
             }
             break;
@@ -3310,16 +2730,12 @@ void Decoder::recon_image_skip_p() {
     // Optimize by removing calculating YCbCr2RGB, int RGB and clipping.
     int pel_r = mb_row * 16;
     int pel_c = mb_col * 16;
-    int R, G, B;
     for (int r=0; r<16; r++) {
         for (int c=0; c<16; c++) {
-            R = pel_R[pel_r + r][pel_c + c];
-            G = pel_G[pel_r + r][pel_c + c];
-            B = pel_B[pel_r + r][pel_c + c];
             // update pel_past
-            pel_past_B[pel_r + r][pel_c + c] = B;
-            pel_past_G[pel_r + r][pel_c + c] = G;
-            pel_past_R[pel_r + r][pel_c + c] = R;
+            pel_past_R[pel_r + r][pel_c + c] = pel_R[pel_r + r][pel_c + c];
+            pel_past_G[pel_r + r][pel_c + c] = pel_G[pel_r + r][pel_c + c];
+            pel_past_B[pel_r + r][pel_c + c] = pel_B[pel_r + r][pel_c + c];
         }
     }
 }
@@ -3328,16 +2744,12 @@ void Decoder::recon_image_skip_b() {
     // Optimize by removing calculating YCbCr2RGB, int RGB and clipping.
     int pel_r = mb_row * 16;
     int pel_c = mb_col * 16;
-    int R, G, B;
     for (int r=0; r<16; r++) {
         for (int c=0; c<16; c++) {
-            R = pel_R[pel_r + r][pel_c + c];
-            G = pel_G[pel_r + r][pel_c + c];
-            B = pel_B[pel_r + r][pel_c + c];
             // update pel_past
-            image.at<Vec3b>(pel_r + r, pel_c + c)[0] = B;
-            image.at<Vec3b>(pel_r + r, pel_c + c)[1] = G;
-            image.at<Vec3b>(pel_r + r, pel_c + c)[2] = R;
+            image.at<Vec3b>(pel_r + r, pel_c + c)[2] = pel_R[pel_r + r][pel_c + c];
+            image.at<Vec3b>(pel_r + r, pel_c + c)[1] = pel_G[pel_r + r][pel_c + c];
+            image.at<Vec3b>(pel_r + r, pel_c + c)[0] = pel_B[pel_r + r][pel_c + c];
         }
     }
 }
@@ -3483,24 +2895,24 @@ void Decoder::decode_mv_s() {
                 int pel_future_c = pel_c + right_for;
                 if ( ! right_half_for && ! down_half_for ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
-                    R_for = pel_future_R.at(pel_future_r).at(pel_future_c);
-                    G_for = pel_future_G.at(pel_future_r).at(pel_future_c);
-                    B_for = pel_future_B.at(pel_future_r).at(pel_future_c);
+                    R_for = pel_future_R[pel_future_r][pel_future_c];
+                    G_for = pel_future_G[pel_future_r][pel_future_c];
+                    B_for = pel_future_B[pel_future_r][pel_future_c];
                 } else if ( ! right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-                    R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c)) / 2);
-                    G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c)) / 2);
-                    B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c)) / 2);
+                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c]) / 2);
+                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c]) / 2);
+                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c]) / 2);
                 } else if ( right_half_for && ! down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-                    R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1)) / 2);
-                    G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1)) / 2);
-                    B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1)) / 2);
+                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1]) / 2);
+                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1]) / 2);
+                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1]) / 2);
                 } else if ( right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;                
-                    R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1) + pel_future_R.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-                    G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1) + pel_future_G.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-                    B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1) + pel_future_B.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
+                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1] + pel_future_R[pel_future_r + 1][pel_future_c + 1]) / 4);
+                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1] + pel_future_G[pel_future_r + 1][pel_future_c + 1]) / 4);
+                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1] + pel_future_B[pel_future_r + 1][pel_future_c + 1]) / 4);
                 }
                 pel_R[pel_r][pel_c] = R_for;
                 pel_G[pel_r][pel_c] = G_for;
@@ -3524,24 +2936,24 @@ void Decoder::decode_mv_s() {
                 int pel_past_c = pel_c + right_bac;
                 if ( ! right_half_bac && ! down_half_bac ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
-                    R_bac = pel_past_R.at(pel_past_r).at(pel_past_c);
-                    G_bac = pel_past_G.at(pel_past_r).at(pel_past_c);
-                    B_bac = pel_past_B.at(pel_past_r).at(pel_past_c);
+                    R_bac = pel_past_R[pel_past_r][pel_past_c];
+                    G_bac = pel_past_G[pel_past_r][pel_past_c];
+                    B_bac = pel_past_B[pel_past_r][pel_past_c];
                 } else if ( ! right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-                    R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                    G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);
+                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c]) / 2);
+                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c]) / 2);
+                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c]) / 2);
                 } else if ( right_half_bac && ! down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-                    R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
-                    G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1)) / 2);
+                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1]) / 2);
+                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1]) / 2);
+                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1]) / 2);
                 } else if ( right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
-                    R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1) + pel_past_R.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-                    G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1) + pel_past_G.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1) + pel_past_B.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);              
+                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1] + pel_past_R[pel_past_r + 1][pel_past_c + 1]) / 4);
+                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1] + pel_past_G[pel_past_r + 1][pel_past_c + 1]) / 4);
+                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1] + pel_past_B[pel_past_r + 1][pel_past_c + 1]) / 4);              
                 }
                 pel_R[pel_r][pel_c] = R_bac;
                 pel_G[pel_r][pel_c] = G_bac;
@@ -3574,48 +2986,48 @@ void Decoder::decode_mv_s() {
                 int pel_future_c = pel_c + right_for;
                 if ( ! right_half_for && ! down_half_for ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
-                    R_for = pel_future_R.at(pel_future_r).at(pel_future_c);
-                    G_for = pel_future_G.at(pel_future_r).at(pel_future_c);
-                    B_for = pel_future_B.at(pel_future_r).at(pel_future_c);
+                    R_for = pel_future_R[pel_future_r][pel_future_c];
+                    G_for = pel_future_G[pel_future_r][pel_future_c];
+                    B_for = pel_future_B[pel_future_r][pel_future_c];
                 } else if ( ! right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-                    R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c)) / 2);
-                    G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c)) / 2);
-                    B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c)) / 2);
+                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c]) / 2);
+                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c]) / 2);
+                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c]) / 2);
                 } else if ( right_half_for && ! down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-                    R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1)) / 2);
-                    G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1)) / 2);
-                    B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1)) / 2);
+                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1]) / 2);
+                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1]) / 2);
+                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1]) / 2);
                 } else if ( right_half_for && down_half_for ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;                
-                    R_for = round((pel_future_R.at(pel_future_r).at(pel_future_c) + pel_future_R.at(pel_future_r + 1).at(pel_future_c) + pel_future_R.at(pel_future_r).at(pel_future_c + 1) + pel_future_R.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-                    G_for = round((pel_future_G.at(pel_future_r).at(pel_future_c) + pel_future_G.at(pel_future_r + 1).at(pel_future_c) + pel_future_G.at(pel_future_r).at(pel_future_c + 1) + pel_future_G.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
-                    B_for = round((pel_future_B.at(pel_future_r).at(pel_future_c) + pel_future_B.at(pel_future_r + 1).at(pel_future_c) + pel_future_B.at(pel_future_r).at(pel_future_c + 1) + pel_future_B.at(pel_future_r + 1).at(pel_future_c + 1)) / 4);
+                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1] + pel_future_R[pel_future_r + 1][pel_future_c + 1]) / 4);
+                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1] + pel_future_G[pel_future_r + 1][pel_future_c + 1]) / 4);
+                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1] + pel_future_B[pel_future_r + 1][pel_future_c + 1]) / 4);
                 }
                 // Backward case
                 int pel_past_r = pel_r + down_bac;
                 int pel_past_c = pel_c + right_bac;
                 if ( ! right_half_bac && ! down_half_bac ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
-                    R_bac = pel_past_R.at(pel_past_r).at(pel_past_c);
-                    G_bac = pel_past_G.at(pel_past_r).at(pel_past_c);
-                    B_bac = pel_past_B.at(pel_past_r).at(pel_past_c);
+                    R_bac = pel_past_R[pel_past_r][pel_past_c];
+                    G_bac = pel_past_G[pel_past_r][pel_past_c];
+                    B_bac = pel_past_B[pel_past_r][pel_past_c];
                 } else if ( ! right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-                    R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                    G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);
+                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c]) / 2);
+                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c]) / 2);
+                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c]) / 2);
                 } else if ( right_half_bac && ! down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-                    R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
-                    G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1)) / 2);
+                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1]) / 2);
+                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1]) / 2);
+                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1]) / 2);
                 } else if ( right_half_bac && down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
-                    R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1) + pel_past_R.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-                    G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1) + pel_past_G.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);
-                    B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c) + pel_past_B.at(pel_past_r).at(pel_past_c + 1) + pel_past_B.at(pel_past_r + 1).at(pel_past_c + 1)) / 4);              
+                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1] + pel_past_R[pel_past_r + 1][pel_past_c + 1]) / 4);
+                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1] + pel_past_G[pel_past_r + 1][pel_past_c + 1]) / 4);
+                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1] + pel_past_B[pel_past_r + 1][pel_past_c + 1]) / 4);              
                 }
                 pel_R[pel_r][pel_c] = round((R_for + R_bac) / 2);
                 pel_G[pel_r][pel_c] = round((G_for + G_bac) / 2);
@@ -3624,163 +3036,3 @@ void Decoder::decode_mv_s() {
         }
     }
 }
-
-//void Decoder::decode_mv_s_a() {
-//    if ((mb_motion_forward == "1") && (mb_motion_backward == "0")) {
-//        // final forward motion vector
-//        right_for = recon_right_for >> 1;
-//        down_for = recon_down_for >> 1;
-//        right_half_for = recon_right_for - 2 * right_for;
-//        down_half_for = recon_down_for - 2 * down_for;
-//        int R_for = 0;
-//        int G_for = 0;
-//        int B_for = 0;
-//        for (int i=0; i<16; i++) {
-//            for (int j=0; j<16; j++) {
-//                int pel_r = (mb_row * 16) + i;
-//                int pel_c = (mb_col * 16) + j;
-//                int pel_future_r = pel_r + down_for;
-//                int pel_future_c = pel_c + right_for;
-//                if ( ! right_half_for && ! down_half_for ) {
-//                    // pel[i][j] = pel_past[i+down_for][j+right_for];
-//                    R_for = pel_future_R[pel_future_r][pel_future_c];
-//                    G_for = pel_future_G[pel_future_r][pel_future_c];
-//                    B_for = pel_future_B[pel_future_r][pel_future_c];
-//                } else if ( ! right_half_for && down_half_for ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-//                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c]) / 2);
-//                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c]) / 2);
-//                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c]) / 2);
-//                } else if ( right_half_for && ! down_half_for ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-//                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1]) / 2);
-//                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1]) / 2);
-//                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1]) / 2);
-//                } else if ( right_half_for && down_half_for ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;                
-//                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1] + pel_future_R[pel_future_r + 1][pel_future_c + 1]) / 4);
-//                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1] + pel_future_G[pel_future_r + 1][pel_future_c + 1]) / 4);
-//                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1] + pel_future_B[pel_future_r + 1][pel_future_c + 1]) / 4);
-//                }
-//                pel_R[pel_r][pel_c] = R_for;
-//                pel_G[pel_r][pel_c] = G_for;
-//                pel_B[pel_r][pel_c] = B_for;
-//            }
-//        }
-//    } else if ((mb_motion_forward == "0") && (mb_motion_backward == "1")) {
-//        // final backward motion vector
-//        right_bac = recon_right_bac >> 1;
-//        down_bac = recon_down_bac >> 1;
-//        right_half_bac = recon_right_bac - 2 * right_bac;
-//        down_half_bac = recon_down_bac - 2 * down_bac;
-//        int R_bac = 0;
-//        int G_bac = 0;
-//        int B_bac = 0;
-//        for (int i=0; i<16; i++) {
-//            for (int j=0; j<16; j++) {
-//                int pel_r = (mb_row * 16) + i;
-//                int pel_c = (mb_col * 16) + j;
-//                int pel_past_r = pel_r + down_bac;
-//                int pel_past_c = pel_c + right_bac;
-//                if ( ! right_half_bac && ! down_half_bac ) {
-//                    // pel[i][j] = pel_past[i+down_for][j+right_for];
-//                    R_bac = pel_past_R[pel_past_r][pel_past_c];
-//                    G_bac = pel_past_G[pel_past_r][pel_past_c];
-//                    B_bac = pel_past_B[pel_past_r][pel_past_c];
-//                } else if ( ! right_half_bac && down_half_bac ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-//                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c]) / 2);
-//                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c]) / 2);
-//                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c]) / 2);
-//                } else if ( right_half_bac && ! down_half_bac ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-//                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1]) / 2);
-//                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1]) / 2);
-//                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1]) / 2);
-//                } else if ( right_half_bac && down_half_bac ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
-//                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1] + pel_past_R[pel_past_r + 1][pel_past_c + 1]) / 4);
-//                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1] + pel_past_G[pel_past_r + 1][pel_past_c + 1]) / 4);
-//                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1] + pel_past_B[pel_past_r + 1][pel_past_c + 1]) / 4);              
-//                }
-//                pel_R[pel_r][pel_c] = R_bac;
-//                pel_G[pel_r][pel_c] = G_bac;
-//                pel_B[pel_r][pel_c] = B_bac;
-//            }
-//        }
-//    } else {
-//        // final forward motion vector
-//        right_for = recon_right_for >> 1;
-//        down_for = recon_down_for >> 1;
-//        right_half_for = recon_right_for - 2 * right_for;
-//        down_half_for = recon_down_for - 2 * down_for;
-//        // final backward motion vector
-//        right_bac = recon_right_bac >> 1;
-//        down_bac = recon_down_bac >> 1;
-//        right_half_bac = recon_right_bac - 2 * right_bac;
-//        down_half_bac = recon_down_bac - 2 * down_bac;
-//        int R_for = 0;
-//        int G_for = 0;
-//        int B_for = 0;
-//        int R_bac = 0;
-//        int G_bac = 0;
-//        int B_bac = 0;
-//        for (int i=0; i<16; i++) {
-//            for (int j=0; j<16; j++) {
-//                int pel_r = (mb_row * 16) + i;
-//                int pel_c = (mb_col * 16) + j;
-//                // Forward case
-//                int pel_future_r = pel_r + down_for;
-//                int pel_future_c = pel_c + right_for;
-//                if ( ! right_half_for && ! down_half_for ) {
-//                    // pel[i][j] = pel_past[i+down_for][j+right_for];
-//                    R_for = pel_future_R[pel_future_r][pel_future_c];
-//                    G_for = pel_future_G[pel_future_r][pel_future_c];
-//                    B_for = pel_future_B[pel_future_r][pel_future_c];
-//                } else if ( ! right_half_for && down_half_for ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-//                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c]) / 2);
-//                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c]) / 2);
-//                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c]) / 2);
-//                } else if ( right_half_for && ! down_half_for ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-//                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1]) / 2);
-//                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1]) / 2);
-//                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1]) / 2);
-//                } else if ( right_half_for && down_half_for ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;                
-//                    R_for = round((pel_future_R[pel_future_r][pel_future_c] + pel_future_R[pel_future_r + 1][pel_future_c] + pel_future_R[pel_future_r][pel_future_c + 1] + pel_future_R[pel_future_r + 1][pel_future_c + 1]) / 4);
-//                    G_for = round((pel_future_G[pel_future_r][pel_future_c] + pel_future_G[pel_future_r + 1][pel_future_c] + pel_future_G[pel_future_r][pel_future_c + 1] + pel_future_G[pel_future_r + 1][pel_future_c + 1]) / 4);
-//                    B_for = round((pel_future_B[pel_future_r][pel_future_c] + pel_future_B[pel_future_r + 1][pel_future_c] + pel_future_B[pel_future_r][pel_future_c + 1] + pel_future_B[pel_future_r + 1][pel_future_c + 1]) / 4);
-//                }
-//                // Backward case
-//                int pel_past_r = pel_r + down_bac;
-//                int pel_past_c = pel_c + right_bac;
-//                if ( ! right_half_bac && ! down_half_bac ) {
-//                    // pel[i][j] = pel_past[i+down_for][j+right_for];
-//                    R_bac = pel_past_R[pel_past_r][pel_past_c];
-//                    G_bac = pel_past_G[pel_past_r][pel_past_c];
-//                    B_bac = pel_past_B[pel_past_r][pel_past_c];
-//                } else if ( ! right_half_bac && down_half_bac ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] ) // 2;
-//                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c]) / 2);
-//                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c]) / 2);
-//                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c]) / 2);
-//                } else if ( right_half_bac && ! down_half_bac ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
-//                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1]) / 2);
-//                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1]) / 2);
-//                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1]) / 2);
-//                } else if ( right_half_bac && down_half_bac ) {
-//                    // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for+1][j+right_for] + pel_past[i+down_for][j+right_for+1] + pel_past[i+down_for+1][j+right_for+1] ) // 4;
-//                    R_bac = round((pel_past_R[pel_past_r][pel_past_c] + pel_past_R[pel_past_r + 1][pel_past_c] + pel_past_R[pel_past_r][pel_past_c + 1] + pel_past_R[pel_past_r + 1][pel_past_c + 1]) / 4);
-//                    G_bac = round((pel_past_G[pel_past_r][pel_past_c] + pel_past_G[pel_past_r + 1][pel_past_c] + pel_past_G[pel_past_r][pel_past_c + 1] + pel_past_G[pel_past_r + 1][pel_past_c + 1]) / 4);
-//                    B_bac = round((pel_past_B[pel_past_r][pel_past_c] + pel_past_B[pel_past_r + 1][pel_past_c] + pel_past_B[pel_past_r][pel_past_c + 1] + pel_past_B[pel_past_r + 1][pel_past_c + 1]) / 4);              
-//                }
-//                pel_R[pel_r][pel_c] = round((R_for + R_bac) / 2);
-//                pel_G[pel_r][pel_c] = round((G_for + G_bac) / 2);
-//                pel_B[pel_r][pel_c] = round((B_for + B_bac) / 2);
-//            }
-//        }
-//    }
-//}
