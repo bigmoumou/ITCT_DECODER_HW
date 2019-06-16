@@ -11,6 +11,7 @@
 #include <algorithm>
 #define PI 3.14159265
 
+#include "easyBMP/EasyBMP.h"
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -18,33 +19,21 @@ using namespace std;
 using namespace cv;
 
 // Init Decoder
-Decoder::Decoder() : dct_zz(64, 0), pattern_code(6, 0), dct_recon(8, vector<int>(8, 0)) {
-    // init idct_result
-    idct_table.resize(8, vector<double> (8, 0));
-    // idct_result;
-    for (int i=0; i<8; i++) {
-        for (int j=0; j<8; j++) {
-            if (j == 0) {
-                idct_table.at(i).at(j) = cos(((2 * i + 1) * j * PI) / (16)) / sqrt(2) / 2;
-            } else {
-                idct_table.at(i).at(j) = cos(((2 * i + 1) * j * PI) / (16)) / 2;
-            }
-        }
-    }
-    // init pel pasr RGB
-    pel_past_R = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_past_G = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_past_B = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_future_R = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_future_G = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_future_B = vector<vector<int>>(240, vector<int>(320, 0));
-    // init pel RGB
-    pel_R = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_G = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_B = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_tmp_R = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_tmp_G = vector<vector<int>>(240, vector<int>(320, 0));
-    pel_tmp_B = vector<vector<int>>(240, vector<int>(320, 0));
+Decoder::Decoder() : 
+    dct_zz(64, 0), pattern_code(6, 0), dct_recon(8, vector<int>(8, 0)),
+    pel_past_R(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_past_G(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_past_B(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_future_R(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_future_G(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_future_B(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_R(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_G(vector<vector<int>>(240, vector<int>(320, 0))),
+    pel_B(vector<vector<int>>(240, vector<int>(320, 0))),
+    image(240, 320, CV_8UC3),
+    y_tmp(vector<vector<int>>(16, vector<int>(16, 0))),
+    cb_tmp(vector<vector<int>>(8, vector<int>(8, 0))),
+    cr_tmp(vector<vector<int>>(8, vector<int>(8, 0))) {
     // new fast idct
     iclp = iclip+512;
     for (int i= -512; i<512; i++) {
@@ -72,11 +61,10 @@ void Decoder::video_sequence() {
             } while (is_next_start_code(0xb8));
         } while (is_next_start_code(0xb3));  
     }
-
-    bool isend = is_next_start_code(0xb7);
-    if (isend) {
-        cout << "Sequence End Code" << endl;
-    }
+    // bool isend = is_next_start_code(0xb7);
+    // if (isend) {
+        // cout << "Sequence End Code" << endl;
+    // }
 }
 
 void Decoder::sequence_header() {
@@ -124,8 +112,7 @@ void Decoder::group_of_pictures() {
 }
 
 void Decoder::picture() {
-    // init mb_intra_vec
-    mb_intra_vec = vector<vector<string>>(240, vector<string>(320, "0"));
+    // init y, cb, cr final
     pic_num += 1;
     picture_start_code = read_bits(32);
     temporal_reference = read_bits(10);
@@ -157,8 +144,6 @@ void Decoder::picture() {
         pel_future_G = pel_past_G;
         pel_future_B = pel_past_B;
     }
-
-    mb_address = 0;
     next_start_code();
     if (is_next_slice_code()) {
         // Slice start code '00000101' to '000001AF'
@@ -168,19 +153,25 @@ void Decoder::picture() {
     }
     // Reconstruct I-frame
     if (picture_coding_type == 3) {
-        recon_pic();
-        ycbcr2rgb(false, true);  // to_pel_past, to_output
+        // push to imageQueue
+        imageQueue.push_back(image);
     } else {
         // update rgb data to pel_past_R, G, B
-        recon_pic();
-        ycbcr2rgb(true, false);  // to_pel_past, to_output
+        for (int r = 0; r< 240; r++) {
+            for (int c = 0; c< 320; c++) {
+                pel_past_B.at(r).at(c) = image.at<Vec3b>(r, c)[0];
+                pel_past_G.at(r).at(c) = image.at<Vec3b>(r, c)[1];
+                pel_past_R.at(r).at(c) = image.at<Vec3b>(r, c)[2];
+            }
+        }
         if (pic_num > 1) {
-            // push to buffer
-             rgb2cvmat(pel_future_R, pel_future_G, pel_future_B);        
+            // push to img buffer
+            rgb2cvmat();
         }
     }
     if (imageQueue.size() > 0) {
         imshow("test", imageQueue.at(0));
+        // output_img();
         imageQueue.pop_front();
         waitKey(1);
     }
@@ -203,11 +194,7 @@ void Decoder::slice() {
 
     slice_start_code = read_bits(32);
     quantizer_scale = read_bits(5);
-
     uint8_t nbs = nextbits(1);
-    if (nbs == 0x1) {
-        ;
-    }
     extra_bit_slice = read_bits(1);
     do {
         macroblock();
@@ -216,6 +203,11 @@ void Decoder::slice() {
 }
 
 void Decoder::macroblock() {
+    mb_intra = "0";
+    // init tmp
+    y_tmp = vector<vector<int>>(16, vector<int>(16, 0));
+    cb_tmp = vector<vector<int>>(8, vector<int>(8, 0));
+    cr_tmp = vector<vector<int>>(8, vector<int>(8, 0));
     // init pattern_code
     pattern_code = {0, 0, 0, 0, 0, 0};
     // init cbp
@@ -237,12 +229,6 @@ void Decoder::macroblock() {
         }
     } while (mb_inc == 101);
 
-    // reset dct_dc_past to 1024 when skipped & mb_intra == "0"
-    if ((inc_acc > 1) || (mb_intra == "0")) {
-        dct_dc_y_past = 1024;
-        dct_dc_cb_past = 1024;
-        dct_dc_cr_past = 1024;
-    }
     // process skipped macroblocks
     for (int i=1; i<inc_acc; i++) {
         // update mb_address & (mb_row, mb_col)
@@ -255,8 +241,10 @@ void Decoder::macroblock() {
             recon_right_for_prev = 0;
             recon_down_for_prev = 0;
             decode_mv();
-        } else if (picture_coding_type == 3) {          
+            recon_image();
+        } else if (picture_coding_type == 3) {
             decode_mv();
+            recon_image();
         }
     }
     // update mb_address & (mb_row, mb_col)
@@ -270,7 +258,12 @@ void Decoder::macroblock() {
     mb_motion_backward = mb_type.substr(2, 1);
     mb_pattern = mb_type.substr(3, 1);
     mb_intra = mb_type.substr(4, 1);
-
+    // reset dct_dc_past to 1024 when skipped & mb_intra == "0"
+    if ((inc_acc > 1) || (mb_intra == "0")) {
+        dct_dc_y_past = 1024;
+        dct_dc_cb_past = 1024;
+        dct_dc_cr_past = 1024;
+    }
     // init recon_right_for & recon_down_for for B-frame
     if ((picture_coding_type == 3) && (mb_intra == "1")) {
         recon_right_for_prev = 0;
@@ -286,17 +279,17 @@ void Decoder::macroblock() {
     }
     if (mb_motion_forward == "1") {
         // horizontal
-        motion_horizontal_forward_code = get_motion_vector_map();
+        motion_horizontal_forward_code = get_motion_vector_map_s();
         if (((forward_f) != 1) && (motion_horizontal_forward_code != 0)) {
             motion_horizontal_forward_r = read_bits(forward_r_size);
         }
         // vertical
-        motion_vertical_forward_code = get_motion_vector_map();
+        motion_vertical_forward_code = get_motion_vector_map_s();
         if (((forward_f) != 1) && (motion_vertical_forward_code != 0)) {
             motion_vertical_forward_r = read_bits(forward_r_size);
         }
         // motion vectors
-        cal_motion_vector_p();    
+        cal_motion_vector_p();
     } else if (picture_coding_type == 2) {
         recon_right_for = 0;
         recon_down_for = 0;
@@ -309,12 +302,12 @@ void Decoder::macroblock() {
     recon_down_bac = 0;
     if (mb_motion_backward == "1") {
         // horizontal
-        motion_horizontal_backward_code = get_motion_vector_map();
+        motion_horizontal_backward_code = get_motion_vector_map_s();
         if (((backward_f) != 1) && (motion_horizontal_backward_code != 0)) {
             motion_horizontal_backward_r = read_bits(backward_r_size);
         }
         // vertical
-        motion_vertical_backward_code = get_motion_vector_map();
+        motion_vertical_backward_code = get_motion_vector_map_s();
         if (((backward_f) != 1) && (motion_vertical_backward_code != 0)) {
             motion_vertical_backward_r = read_bits(backward_r_size);
         }
@@ -324,14 +317,6 @@ void Decoder::macroblock() {
     // init dct dc past
     if (mb_intra == "0") {
         decode_mv();
-    } else {
-        for (int i=0; i<16; i++) {
-            for (int j=0; j<16; j++) {
-                int pel_r = (mb_row * 16) + i;
-                int pel_c = (mb_col * 16) + j;
-                mb_intra_vec.at(pel_r).at(pel_c) = mb_intra;
-            }
-        }
     }
     // update cbp
     if (mb_pattern == "1") {
@@ -346,6 +331,8 @@ void Decoder::macroblock() {
     if (mb_intra == "1") {
         past_intra_address = mb_address;
     }
+    // recon_image
+    recon_image();
     // end_of_macroblock
     if (picture_coding_type == 4) {
         uint8_t _ = read_bits(1);
@@ -394,17 +381,14 @@ void Decoder::block(int i) {
                 dct_zz_i = 0;
             }
             while (nextbits(2) != 2) {
-                dct_coeff_next_s();
+//                dct_coeff_next_s();
+//                dct_coeff_next_s2();
+                dct_coeff_next_s3();
             }
             end_of_block = read_bits(2);
-            // debug
-            if (end_of_block == 2) {
-                ;
-            }
             // Reconstruct dct_recon
             reconstruct_dct(i);
             // IDCT
-//             idct();
             fast_idct();
         }
     }
@@ -443,6 +427,38 @@ void Decoder::print_hex(unsigned int code) {
 
 void Decoder::print_dec(unsigned int code) {
     cout << dec << code << endl;
+}
+
+void Decoder::output_img() {
+    // Declare output img class
+    BMP Bmp_image;
+    Bmp_image.SetSize(320, 240);
+    for (int r = 0; r < 240; r++) {
+        for (int c = 0; c < 320; c++) {
+            Bmp_image (c, r) -> Red = imageQueue.at(0).at<Vec3b>(r, c)[2];
+            Bmp_image (c, r) -> Green = imageQueue.at(0).at<Vec3b>(r, c)[1];
+            Bmp_image (c, r) -> Blue = imageQueue.at(0).at<Vec3b>(r, c)[0];
+            Bmp_image (c, r) -> Alpha = 0;
+        }
+    }
+    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_S\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
+    Bmp_image.WriteToFile(wfilename.c_str());
+}
+
+void Decoder::output_img_mat() {
+    // Declare output img class
+    BMP Bmp_image;
+    Bmp_image.SetSize(320, 240);
+    for (int r = 0; r < 240; r++) {
+        for (int c = 0; c < 320; c++) {
+            Bmp_image (c, r) -> Red = image.at<Vec3b>(r, c)[2];
+            Bmp_image (c, r) -> Green = image.at<Vec3b>(r, c)[1];
+            Bmp_image (c, r) -> Blue = image.at<Vec3b>(r, c)[0];
+            Bmp_image (c, r) -> Alpha = 0;
+        }
+    }
+    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_S\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
+    Bmp_image.WriteToFile(wfilename.c_str());
 }
 
 // ---> check start & end code
@@ -926,6 +942,150 @@ int Decoder::get_motion_vector_map() {
         if (iter !=motion_vector_map.end()) {
             uint8_t _ = read_bits(i);
             return iter->second;
+        }
+    }
+}
+
+int Decoder::get_motion_vector_map_s() {
+    uint16_t nbs16 = 0;
+    for (int i=1; i<12; i++) {
+        nbs16 = i;
+        nbs16 = (nbs16 << 6) + nextbits(i);
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs16) {
+            case 0x2d8:
+                _ = read_bits(i);
+                i = 12;
+                return 16;
+            case 0x2d9:
+                _ = read_bits(i);
+                i = 12;
+                return -16;
+            case 0x2da:
+                _ = read_bits(i);
+                i = 12;
+                return 15;
+            case 0x2db:
+                _ = read_bits(i);
+                i = 12;
+                return -15;
+            case 0x2dc:
+                _ = read_bits(i);
+                i = 12;
+                return 14;
+            case 0x2dd:
+                _ = read_bits(i);
+                i = 12;
+                return -14;
+            case 0x2de:
+                _ = read_bits(i);
+                i = 12;
+                return 13;
+            case 0x2df:
+                _ = read_bits(i);
+                i = 12;
+                return -13;
+            case 0x2e0:
+                _ = read_bits(i);
+                i = 12;
+                return 12;
+            case 0x2e1:
+                _ = read_bits(i);
+                i = 12;
+                return -12;
+            case 0x2e2:
+                _ = read_bits(i);
+                i = 12;
+                return 11;
+            case 0x2e3:
+                _ = read_bits(i);
+                i = 12;
+                return -11;
+            case 0x292:
+                _ = read_bits(i);
+                i = 12;
+                return 10;
+            case 0x293:
+                _ = read_bits(i);
+                i = 12;
+                return -10;
+            case 0x294:
+                _ = read_bits(i);
+                i = 12;
+                return 9;
+            case 0x295:
+                _ = read_bits(i);
+                i = 12;
+                return -9;
+            case 0x296:
+                _ = read_bits(i);
+                i = 12;
+                return 8;
+            case 0x297:
+                _ = read_bits(i);
+                i = 12;
+                return -8;
+            case 0x206:
+                _ = read_bits(i);
+                i = 12;
+                return 7;
+            case 0x207:
+                _ = read_bits(i);
+                i = 12;
+                return -7;
+            case 0x208:
+                _ = read_bits(i);
+                i = 12;
+                return 6;
+            case 0x209:
+                _ = read_bits(i);
+                i = 12;
+                return -6;
+            case 0x20a:
+                _ = read_bits(i);
+                i = 12;
+                return 5;
+            case 0x20b:
+                _ = read_bits(i);
+                i = 12;
+                return -5;
+            case 0x1c6:
+                _ = read_bits(i);
+                i = 12;
+                return 4;
+            case 0x1c7:
+                _ = read_bits(i);
+                i = 12;
+                return -4;
+            case 0x142:
+                _ = read_bits(i);
+                i = 12;
+                return 3;
+            case 0x143:
+                _ = read_bits(i);
+                i = 12;
+                return -3;
+            case 0x102:
+                _ = read_bits(i);
+                i = 12;
+                return 2;
+            case 0x103:
+                _ = read_bits(i);
+                i = 12;
+                return -2;
+            case 0xc2:
+                _ = read_bits(i);
+                i = 12;
+                return 1;
+            case 0xc3:
+                _ = read_bits(i);
+                i = 12;
+                return -1;
+            case 0x41:
+                _ = read_bits(i);
+                i = 12;
+                return 0;
         }
     }
 }
@@ -2114,6 +2274,1152 @@ void Decoder::dct_coeff_next_s() {
     }
 }
 
+void Decoder::dct_coeff_next_s2() {
+    uint32_t tmp;
+    uint64_t nbs64 = 0;
+    uint32_t second_nbs32 = nextbits(29);
+    for (int i=2; i<29; i++) {
+        nbs64 = i;
+        nbs64 = (nbs64 << 32) + (second_nbs32 >> (29 - i));
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs64) {
+            case 0x1000000010:
+                _ = read_bits(i);
+                fill_dct_zz(1, 18);
+                i = 29;
+                break;
+            case 0x1000000011:
+                _ = read_bits(i);
+                fill_dct_zz(1, 17);
+                i = 29;
+                break;
+            case 0x1000000012:
+                _ = read_bits(i);
+                fill_dct_zz(1, 16);
+                i = 29;
+                break;
+            case 0x1000000013:
+                _ = read_bits(i);
+                fill_dct_zz(1, 15);
+                i = 29;
+                break;
+            case 0x1000000014:
+                _ = read_bits(i);
+                fill_dct_zz(6, 3);
+                i = 29;
+                break;
+            case 0x1000000015:
+                _ = read_bits(i);
+                fill_dct_zz(16, 2);
+                i = 29;
+                break;
+            case 0x1000000016:
+                _ = read_bits(i);
+                fill_dct_zz(15, 2);
+                i = 29;
+                break;
+            case 0x1000000017:
+                _ = read_bits(i);
+                fill_dct_zz(14, 2);
+                i = 29;
+                break;
+            case 0x1000000018:
+                _ = read_bits(i);
+                fill_dct_zz(13, 2);
+                i = 29;
+                break;
+            case 0x1000000019:
+                _ = read_bits(i);
+                fill_dct_zz(12, 2);
+                i = 29;
+                break;
+            case 0x100000001a:
+                _ = read_bits(i);
+                fill_dct_zz(11, 2);
+                i = 29;
+                break;
+            case 0x100000001b:
+                _ = read_bits(i);
+                fill_dct_zz(31, 1);
+                i = 29;
+                break;
+            case 0x100000001c:
+                _ = read_bits(i);
+                fill_dct_zz(30, 1);
+                i = 29;
+                break;
+            case 0x100000001d:
+                _ = read_bits(i);
+                fill_dct_zz(29, 1);
+                i = 29;
+                break;
+            case 0x100000001e:
+                _ = read_bits(i);
+                fill_dct_zz(28, 1);
+                i = 29;
+                break;
+            case 0x100000001f:
+                _ = read_bits(i);
+                fill_dct_zz(27, 1);
+                i = 29;
+                break;
+            case 0xf00000010:
+                _ = read_bits(i);
+                fill_dct_zz(0, 40);
+                i = 29;
+                break;
+            case 0xf00000011:
+                _ = read_bits(i);
+                fill_dct_zz(0, 39);
+                i = 29;
+                break;
+            case 0xf00000012:
+                _ = read_bits(i);
+                fill_dct_zz(0, 38);
+                i = 29;
+                break;
+            case 0xf00000013:
+                _ = read_bits(i);
+                fill_dct_zz(0, 37);
+                i = 29;
+                break;
+            case 0xf00000014:
+                _ = read_bits(i);
+                fill_dct_zz(0, 36);
+                i = 29;
+                break;
+            case 0xf00000015:
+                _ = read_bits(i);
+                fill_dct_zz(0, 35);
+                i = 29;
+                break;
+            case 0xf00000016:
+                _ = read_bits(i);
+                fill_dct_zz(0, 34);
+                i = 29;
+                break;
+            case 0xf00000017:
+                _ = read_bits(i);
+                fill_dct_zz(0, 33);
+                i = 29;
+                break;
+            case 0xf00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 32);
+                i = 29;
+                break;
+            case 0xf00000019:
+                _ = read_bits(i);
+                fill_dct_zz(1, 14);
+                i = 29;
+                break;
+            case 0xf0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(1, 13);
+                i = 29;
+                break;
+            case 0xf0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(1, 12);
+                i = 29;
+                break;
+            case 0xf0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(1, 11);
+                i = 29;
+                break;
+            case 0xf0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(1, 10);
+                i = 29;
+                break;
+            case 0xf0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(1, 9);
+                i = 29;
+                break;
+            case 0xf0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(1, 8);
+                i = 29;
+                break;
+            case 0xe00000010:
+                _ = read_bits(i);
+                fill_dct_zz(0, 31);
+                i = 29;
+                break;
+            case 0xe00000011:
+                _ = read_bits(i);
+                fill_dct_zz(0, 30);
+                i = 29;
+                break;
+            case 0xe00000012:
+                _ = read_bits(i);
+                fill_dct_zz(0, 29);
+                i = 29;
+                break;
+            case 0xe00000013:
+                _ = read_bits(i);
+                fill_dct_zz(0, 28);
+                i = 29;
+                break;
+            case 0xe00000014:
+                _ = read_bits(i);
+                fill_dct_zz(0, 27);
+                i = 29;
+                break;
+            case 0xe00000015:
+                _ = read_bits(i);
+                fill_dct_zz(0, 26);
+                i = 29;
+                break;
+            case 0xe00000016:
+                _ = read_bits(i);
+                fill_dct_zz(0, 25);
+                i = 29;
+                break;
+            case 0xe00000017:
+                _ = read_bits(i);
+                fill_dct_zz(0, 24);
+                i = 29;
+                break;
+            case 0xe00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 23);
+                i = 29;
+                break;
+            case 0xe00000019:
+                _ = read_bits(i);
+                fill_dct_zz(0, 22);
+                i = 29;
+                break;
+            case 0xe0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 21);
+                i = 29;
+                break;
+            case 0xe0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(0, 20);
+                i = 29;
+                break;
+            case 0xe0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(0, 19);
+                i = 29;
+                break;
+            case 0xe0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(0, 18);
+                i = 29;
+                break;
+            case 0xe0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(0, 17);
+                i = 29;
+                break;
+            case 0xe0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(0, 16);
+                i = 29;
+                break;
+            case 0xd00000010:
+                _ = read_bits(i);
+                fill_dct_zz(10, 2);
+                i = 29;
+                break;
+            case 0xd00000011:
+                _ = read_bits(i);
+                fill_dct_zz(9, 2);
+                i = 29;
+                break;
+            case 0xd00000012:
+                _ = read_bits(i);
+                fill_dct_zz(5, 3);
+                i = 29;
+                break;
+            case 0xd00000013:
+                _ = read_bits(i);
+                fill_dct_zz(3, 4);
+                i = 29;
+                break;
+            case 0xd00000014:
+                _ = read_bits(i);
+                fill_dct_zz(2, 5);
+                i = 29;
+                break;
+            case 0xd00000015:
+                _ = read_bits(i);
+                fill_dct_zz(1, 7);
+                i = 29;
+                break;
+            case 0xd00000016:
+                _ = read_bits(i);
+                fill_dct_zz(1, 6);
+                i = 29;
+                break;
+            case 0xd00000017:
+                _ = read_bits(i);
+                fill_dct_zz(0, 15);
+                i = 29;
+                break;
+            case 0xd00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 14);
+                i = 29;
+                break;
+            case 0xd00000019:
+                _ = read_bits(i);
+                fill_dct_zz(0, 13);
+                i = 29;
+                break;
+            case 0xd0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 12);
+                i = 29;
+                break;
+            case 0xd0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(26, 1);
+                i = 29;
+                break;
+            case 0xd0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(25, 1);
+                i = 29;
+                break;
+            case 0xd0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(24, 1);
+                i = 29;
+                break;
+            case 0xd0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(23, 1);
+                i = 29;
+                break;
+            case 0xd0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(22, 1);
+                i = 29;
+                break;
+            case 0xc00000010:
+                _ = read_bits(i);
+                fill_dct_zz(0, 11);
+                i = 29;
+                break;
+            case 0xc00000011:
+                _ = read_bits(i);
+                fill_dct_zz(8, 2);
+                i = 29;
+                break;
+            case 0xc00000012:
+                _ = read_bits(i);
+                fill_dct_zz(4, 3);
+                i = 29;
+                break;
+            case 0xc00000013:
+                _ = read_bits(i);
+                fill_dct_zz(0, 10);
+                i = 29;
+                break;
+            case 0xc00000014:
+                _ = read_bits(i);
+                fill_dct_zz(2, 4);
+                i = 29;
+                break;
+            case 0xc00000015:
+                _ = read_bits(i);
+                fill_dct_zz(7, 2);
+                i = 29;
+                break;
+            case 0xc00000016:
+                _ = read_bits(i);
+                fill_dct_zz(21, 1);
+                i = 29;
+                break;
+            case 0xc00000017:
+                _ = read_bits(i);
+                fill_dct_zz(20, 1);
+                i = 29;
+                break;
+            case 0xc00000018:
+                _ = read_bits(i);
+                fill_dct_zz(0, 9);
+                i = 29;
+                break;
+            case 0xc00000019:
+                _ = read_bits(i);
+                fill_dct_zz(19, 1);
+                i = 29;
+                break;
+            case 0xc0000001a:
+                _ = read_bits(i);
+                fill_dct_zz(18, 1);
+                i = 29;
+                break;
+            case 0xc0000001b:
+                _ = read_bits(i);
+                fill_dct_zz(1, 5);
+                i = 29;
+                break;
+            case 0xc0000001c:
+                _ = read_bits(i);
+                fill_dct_zz(3, 3);
+                i = 29;
+                break;
+            case 0xc0000001d:
+                _ = read_bits(i);
+                fill_dct_zz(0, 8);
+                i = 29;
+                break;
+            case 0xc0000001e:
+                _ = read_bits(i);
+                fill_dct_zz(6, 2);
+                i = 29;
+                break;
+            case 0xc0000001f:
+                _ = read_bits(i);
+                fill_dct_zz(17, 1);
+                i = 29;
+                break;
+            case 0xa00000008:
+                _ = read_bits(i);
+                fill_dct_zz(16, 1);
+                i = 29;
+                break;
+            case 0xa00000009:
+                _ = read_bits(i);
+                fill_dct_zz(5, 2);
+                i = 29;
+                break;
+            case 0xa0000000a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 7);
+                i = 29;
+                break;
+            case 0xa0000000b:
+                _ = read_bits(i);
+                fill_dct_zz(2, 3);
+                i = 29;
+                break;
+            case 0xa0000000c:
+                _ = read_bits(i);
+                fill_dct_zz(1, 4);
+                i = 29;
+                break;
+            case 0xa0000000d:
+                _ = read_bits(i);
+                fill_dct_zz(15, 1);
+                i = 29;
+                break;
+            case 0xa0000000e:
+                _ = read_bits(i);
+                fill_dct_zz(14, 1);
+                i = 29;
+                break;
+            case 0xa0000000f:
+                _ = read_bits(i);
+                fill_dct_zz(4, 2);
+                i = 29;
+                break;
+            case 0x600000001:
+                _ = read_bits(i);
+                fill_dct_zz(-1, -1);
+                i = 29;
+                break;
+            case 0x700000004:
+                _ = read_bits(i);
+                fill_dct_zz(2, 2);
+                i = 29;
+                break;
+            case 0x700000005:
+                _ = read_bits(i);
+                fill_dct_zz(9, 1);
+                i = 29;
+                break;
+            case 0x700000006:
+                _ = read_bits(i);
+                fill_dct_zz(0, 4);
+                i = 29;
+                break;
+            case 0x700000007:
+                _ = read_bits(i);
+                fill_dct_zz(8, 1);
+                i = 29;
+                break;
+            case 0x600000004:
+                _ = read_bits(i);
+                fill_dct_zz(7, 1);
+                i = 29;
+                break;
+            case 0x600000005:
+                _ = read_bits(i);
+                fill_dct_zz(6, 1);
+                i = 29;
+                break;
+            case 0x600000006:
+                _ = read_bits(i);
+                fill_dct_zz(1, 2);
+                i = 29;
+                break;
+            case 0x600000007:
+                _ = read_bits(i);
+                fill_dct_zz(5, 1);
+                i = 29;
+                break;
+            case 0x800000020:
+                _ = read_bits(i);
+                fill_dct_zz(13, 1);
+                i = 29;
+                break;
+            case 0x800000021:
+                _ = read_bits(i);
+                fill_dct_zz(0, 6);
+                i = 29;
+                break;
+            case 0x800000022:
+                _ = read_bits(i);
+                fill_dct_zz(12, 1);
+                i = 29;
+                break;
+            case 0x800000023:
+                _ = read_bits(i);
+                fill_dct_zz(11, 1);
+                i = 29;
+                break;
+            case 0x800000024:
+                _ = read_bits(i);
+                fill_dct_zz(3, 2);
+                i = 29;
+                break;
+            case 0x800000025:
+                _ = read_bits(i);
+                fill_dct_zz(1, 3);
+                i = 29;
+                break;
+            case 0x800000026:
+                _ = read_bits(i);
+                fill_dct_zz(0, 5);
+                i = 29;
+                break;
+            case 0x800000027:
+                _ = read_bits(i);
+                fill_dct_zz(10, 1);
+                i = 29;
+                break;
+            case 0x500000005:
+                _ = read_bits(i);
+                fill_dct_zz(0, 3);
+                i = 29;
+                break;
+            case 0x500000006:
+                _ = read_bits(i);
+                fill_dct_zz(4, 1);
+                i = 29;
+                break;
+            case 0x500000007:
+                _ = read_bits(i);
+                fill_dct_zz(3, 1);
+                i = 29;
+                break;
+            case 0x400000004:
+                _ = read_bits(i);
+                fill_dct_zz(0, 2);
+                i = 29;
+                break;
+            case 0x400000005:
+                _ = read_bits(i);
+                fill_dct_zz(2, 1);
+                i = 29;
+                break;
+            case 0x300000003:
+                _ = read_bits(i);
+                fill_dct_zz(1, 1);
+                i = 29;
+                break;
+            case 0x200000003:
+                _ = read_bits(i);
+                fill_dct_zz(0, 1);
+                i = 29;
+                break;
+        }
+    }
+}
+
+void Decoder::dct_coeff_next_s3() {
+    uint32_t nbs32 = 0;
+    for (int i=2; i<29; i++) {
+        nbs32 = i;
+        nbs32 = (nbs32 << 6) + nextbits(i);
+        // Lookup table via switch optimization
+        uint8_t _ = 0;
+        switch (nbs32) {
+            case 0x410:
+                _ = read_bits(i);
+                fill_dct_zz(1, 18);
+                i = 29;
+                break;
+            case 0x411:
+                _ = read_bits(i);
+                fill_dct_zz(1, 17);
+                i = 29;
+                break;
+            case 0x412:
+                _ = read_bits(i);
+                fill_dct_zz(1, 16);
+                i = 29;
+                break;
+            case 0x413:
+                _ = read_bits(i);
+                fill_dct_zz(1, 15);
+                i = 29;
+                break;
+            case 0x414:
+                _ = read_bits(i);
+                fill_dct_zz(6, 3);
+                i = 29;
+                break;
+            case 0x415:
+                _ = read_bits(i);
+                fill_dct_zz(16, 2);
+                i = 29;
+                break;
+            case 0x416:
+                _ = read_bits(i);
+                fill_dct_zz(15, 2);
+                i = 29;
+                break;
+            case 0x417:
+                _ = read_bits(i);
+                fill_dct_zz(14, 2);
+                i = 29;
+                break;
+            case 0x418:
+                _ = read_bits(i);
+                fill_dct_zz(13, 2);
+                i = 29;
+                break;
+            case 0x419:
+                _ = read_bits(i);
+                fill_dct_zz(12, 2);
+                i = 29;
+                break;
+            case 0x41a:
+                _ = read_bits(i);
+                fill_dct_zz(11, 2);
+                i = 29;
+                break;
+            case 0x41b:
+                _ = read_bits(i);
+                fill_dct_zz(31, 1);
+                i = 29;
+                break;
+            case 0x41c:
+                _ = read_bits(i);
+                fill_dct_zz(30, 1);
+                i = 29;
+                break;
+            case 0x41d:
+                _ = read_bits(i);
+                fill_dct_zz(29, 1);
+                i = 29;
+                break;
+            case 0x41e:
+                _ = read_bits(i);
+                fill_dct_zz(28, 1);
+                i = 29;
+                break;
+            case 0x41f:
+                _ = read_bits(i);
+                fill_dct_zz(27, 1);
+                i = 29;
+                break;
+            case 0x3d0:
+                _ = read_bits(i);
+                fill_dct_zz(0, 40);
+                i = 29;
+                break;
+            case 0x3d1:
+                _ = read_bits(i);
+                fill_dct_zz(0, 39);
+                i = 29;
+                break;
+            case 0x3d2:
+                _ = read_bits(i);
+                fill_dct_zz(0, 38);
+                i = 29;
+                break;
+            case 0x3d3:
+                _ = read_bits(i);
+                fill_dct_zz(0, 37);
+                i = 29;
+                break;
+            case 0x3d4:
+                _ = read_bits(i);
+                fill_dct_zz(0, 36);
+                i = 29;
+                break;
+            case 0x3d5:
+                _ = read_bits(i);
+                fill_dct_zz(0, 35);
+                i = 29;
+                break;
+            case 0x3d6:
+                _ = read_bits(i);
+                fill_dct_zz(0, 34);
+                i = 29;
+                break;
+            case 0x3d7:
+                _ = read_bits(i);
+                fill_dct_zz(0, 33);
+                i = 29;
+                break;
+            case 0x3d8:
+                _ = read_bits(i);
+                fill_dct_zz(0, 32);
+                i = 29;
+                break;
+            case 0x3d9:
+                _ = read_bits(i);
+                fill_dct_zz(1, 14);
+                i = 29;
+                break;
+            case 0x3da:
+                _ = read_bits(i);
+                fill_dct_zz(1, 13);
+                i = 29;
+                break;
+            case 0x3db:
+                _ = read_bits(i);
+                fill_dct_zz(1, 12);
+                i = 29;
+                break;
+            case 0x3dc:
+                _ = read_bits(i);
+                fill_dct_zz(1, 11);
+                i = 29;
+                break;
+            case 0x3dd:
+                _ = read_bits(i);
+                fill_dct_zz(1, 10);
+                i = 29;
+                break;
+            case 0x3de:
+                _ = read_bits(i);
+                fill_dct_zz(1, 9);
+                i = 29;
+                break;
+            case 0x3df:
+                _ = read_bits(i);
+                fill_dct_zz(1, 8);
+                i = 29;
+                break;
+            case 0x390:
+                _ = read_bits(i);
+                fill_dct_zz(0, 31);
+                i = 29;
+                break;
+            case 0x391:
+                _ = read_bits(i);
+                fill_dct_zz(0, 30);
+                i = 29;
+                break;
+            case 0x392:
+                _ = read_bits(i);
+                fill_dct_zz(0, 29);
+                i = 29;
+                break;
+            case 0x393:
+                _ = read_bits(i);
+                fill_dct_zz(0, 28);
+                i = 29;
+                break;
+            case 0x394:
+                _ = read_bits(i);
+                fill_dct_zz(0, 27);
+                i = 29;
+                break;
+            case 0x395:
+                _ = read_bits(i);
+                fill_dct_zz(0, 26);
+                i = 29;
+                break;
+            case 0x396:
+                _ = read_bits(i);
+                fill_dct_zz(0, 25);
+                i = 29;
+                break;
+            case 0x397:
+                _ = read_bits(i);
+                fill_dct_zz(0, 24);
+                i = 29;
+                break;
+            case 0x398:
+                _ = read_bits(i);
+                fill_dct_zz(0, 23);
+                i = 29;
+                break;
+            case 0x399:
+                _ = read_bits(i);
+                fill_dct_zz(0, 22);
+                i = 29;
+                break;
+            case 0x39a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 21);
+                i = 29;
+                break;
+            case 0x39b:
+                _ = read_bits(i);
+                fill_dct_zz(0, 20);
+                i = 29;
+                break;
+            case 0x39c:
+                _ = read_bits(i);
+                fill_dct_zz(0, 19);
+                i = 29;
+                break;
+            case 0x39d:
+                _ = read_bits(i);
+                fill_dct_zz(0, 18);
+                i = 29;
+                break;
+            case 0x39e:
+                _ = read_bits(i);
+                fill_dct_zz(0, 17);
+                i = 29;
+                break;
+            case 0x39f:
+                _ = read_bits(i);
+                fill_dct_zz(0, 16);
+                i = 29;
+                break;
+            case 0x350:
+                _ = read_bits(i);
+                fill_dct_zz(10, 2);
+                i = 29;
+                break;
+            case 0x351:
+                _ = read_bits(i);
+                fill_dct_zz(9, 2);
+                i = 29;
+                break;
+            case 0x352:
+                _ = read_bits(i);
+                fill_dct_zz(5, 3);
+                i = 29;
+                break;
+            case 0x353:
+                _ = read_bits(i);
+                fill_dct_zz(3, 4);
+                i = 29;
+                break;
+            case 0x354:
+                _ = read_bits(i);
+                fill_dct_zz(2, 5);
+                i = 29;
+                break;
+            case 0x355:
+                _ = read_bits(i);
+                fill_dct_zz(1, 7);
+                i = 29;
+                break;
+            case 0x356:
+                _ = read_bits(i);
+                fill_dct_zz(1, 6);
+                i = 29;
+                break;
+            case 0x357:
+                _ = read_bits(i);
+                fill_dct_zz(0, 15);
+                i = 29;
+                break;
+            case 0x358:
+                _ = read_bits(i);
+                fill_dct_zz(0, 14);
+                i = 29;
+                break;
+            case 0x359:
+                _ = read_bits(i);
+                fill_dct_zz(0, 13);
+                i = 29;
+                break;
+            case 0x35a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 12);
+                i = 29;
+                break;
+            case 0x35b:
+                _ = read_bits(i);
+                fill_dct_zz(26, 1);
+                i = 29;
+                break;
+            case 0x35c:
+                _ = read_bits(i);
+                fill_dct_zz(25, 1);
+                i = 29;
+                break;
+            case 0x35d:
+                _ = read_bits(i);
+                fill_dct_zz(24, 1);
+                i = 29;
+                break;
+            case 0x35e:
+                _ = read_bits(i);
+                fill_dct_zz(23, 1);
+                i = 29;
+                break;
+            case 0x35f:
+                _ = read_bits(i);
+                fill_dct_zz(22, 1);
+                i = 29;
+                break;
+            case 0x310:
+                _ = read_bits(i);
+                fill_dct_zz(0, 11);
+                i = 29;
+                break;
+            case 0x311:
+                _ = read_bits(i);
+                fill_dct_zz(8, 2);
+                i = 29;
+                break;
+            case 0x312:
+                _ = read_bits(i);
+                fill_dct_zz(4, 3);
+                i = 29;
+                break;
+            case 0x313:
+                _ = read_bits(i);
+                fill_dct_zz(0, 10);
+                i = 29;
+                break;
+            case 0x314:
+                _ = read_bits(i);
+                fill_dct_zz(2, 4);
+                i = 29;
+                break;
+            case 0x315:
+                _ = read_bits(i);
+                fill_dct_zz(7, 2);
+                i = 29;
+                break;
+            case 0x316:
+                _ = read_bits(i);
+                fill_dct_zz(21, 1);
+                i = 29;
+                break;
+            case 0x317:
+                _ = read_bits(i);
+                fill_dct_zz(20, 1);
+                i = 29;
+                break;
+            case 0x318:
+                _ = read_bits(i);
+                fill_dct_zz(0, 9);
+                i = 29;
+                break;
+            case 0x319:
+                _ = read_bits(i);
+                fill_dct_zz(19, 1);
+                i = 29;
+                break;
+            case 0x31a:
+                _ = read_bits(i);
+                fill_dct_zz(18, 1);
+                i = 29;
+                break;
+            case 0x31b:
+                _ = read_bits(i);
+                fill_dct_zz(1, 5);
+                i = 29;
+                break;
+            case 0x31c:
+                _ = read_bits(i);
+                fill_dct_zz(3, 3);
+                i = 29;
+                break;
+            case 0x31d:
+                _ = read_bits(i);
+                fill_dct_zz(0, 8);
+                i = 29;
+                break;
+            case 0x31e:
+                _ = read_bits(i);
+                fill_dct_zz(6, 2);
+                i = 29;
+                break;
+            case 0x31f:
+                _ = read_bits(i);
+                fill_dct_zz(17, 1);
+                i = 29;
+                break;
+            case 0x288:
+                _ = read_bits(i);
+                fill_dct_zz(16, 1);
+                i = 29;
+                break;
+            case 0x289:
+                _ = read_bits(i);
+                fill_dct_zz(5, 2);
+                i = 29;
+                break;
+            case 0x28a:
+                _ = read_bits(i);
+                fill_dct_zz(0, 7);
+                i = 29;
+                break;
+            case 0x28b:
+                _ = read_bits(i);
+                fill_dct_zz(2, 3);
+                i = 29;
+                break;
+            case 0x28c:
+                _ = read_bits(i);
+                fill_dct_zz(1, 4);
+                i = 29;
+                break;
+            case 0x28d:
+                _ = read_bits(i);
+                fill_dct_zz(15, 1);
+                i = 29;
+                break;
+            case 0x28e:
+                _ = read_bits(i);
+                fill_dct_zz(14, 1);
+                i = 29;
+                break;
+            case 0x28f:
+                _ = read_bits(i);
+                fill_dct_zz(4, 2);
+                i = 29;
+                break;
+            case 0x181:
+                _ = read_bits(i);
+                fill_dct_zz(-1, -1);
+                i = 29;
+                break;
+            case 0x1c4:
+                _ = read_bits(i);
+                fill_dct_zz(2, 2);
+                i = 29;
+                break;
+            case 0x1c5:
+                _ = read_bits(i);
+                fill_dct_zz(9, 1);
+                i = 29;
+                break;
+            case 0x1c6:
+                _ = read_bits(i);
+                fill_dct_zz(0, 4);
+                i = 29;
+                break;
+            case 0x1c7:
+                _ = read_bits(i);
+                fill_dct_zz(8, 1);
+                i = 29;
+                break;
+            case 0x184:
+                _ = read_bits(i);
+                fill_dct_zz(7, 1);
+                i = 29;
+                break;
+            case 0x185:
+                _ = read_bits(i);
+                fill_dct_zz(6, 1);
+                i = 29;
+                break;
+            case 0x186:
+                _ = read_bits(i);
+                fill_dct_zz(1, 2);
+                i = 29;
+                break;
+            case 0x187:
+                _ = read_bits(i);
+                fill_dct_zz(5, 1);
+                i = 29;
+                break;
+            case 0x220:
+                _ = read_bits(i);
+                fill_dct_zz(13, 1);
+                i = 29;
+                break;
+            case 0x221:
+                _ = read_bits(i);
+                fill_dct_zz(0, 6);
+                i = 29;
+                break;
+            case 0x222:
+                _ = read_bits(i);
+                fill_dct_zz(12, 1);
+                i = 29;
+                break;
+            case 0x223:
+                _ = read_bits(i);
+                fill_dct_zz(11, 1);
+                i = 29;
+                break;
+            case 0x224:
+                _ = read_bits(i);
+                fill_dct_zz(3, 2);
+                i = 29;
+                break;
+            case 0x225:
+                _ = read_bits(i);
+                fill_dct_zz(1, 3);
+                i = 29;
+                break;
+            case 0x226:
+                _ = read_bits(i);
+                fill_dct_zz(0, 5);
+                i = 29;
+                break;
+            case 0x227:
+                _ = read_bits(i);
+                fill_dct_zz(10, 1);
+                i = 29;
+                break;
+            case 0x145:
+                _ = read_bits(i);
+                fill_dct_zz(0, 3);
+                i = 29;
+                break;
+            case 0x146:
+                _ = read_bits(i);
+                fill_dct_zz(4, 1);
+                i = 29;
+                break;
+            case 0x147:
+                _ = read_bits(i);
+                fill_dct_zz(3, 1);
+                i = 29;
+                break;
+            case 0x104:
+                _ = read_bits(i);
+                fill_dct_zz(0, 2);
+                i = 29;
+                break;
+            case 0x105:
+                _ = read_bits(i);
+                fill_dct_zz(2, 1);
+                i = 29;
+                break;
+            case 0xc3:
+                _ = read_bits(i);
+                fill_dct_zz(1, 1);
+                i = 29;
+                break;
+            case 0x83:
+                _ = read_bits(i);
+                fill_dct_zz(0, 1);
+                i = 29;
+                break;
+        }
+    }
+}
+
 void Decoder::fill_dct_zz(int run, int level) {
     // normal case
     if (run != -1) {
@@ -2244,57 +3550,8 @@ void Decoder::reconstruct_dct(int num) {
     }
 }
 
-void Decoder::idct() {
-    vector<vector<int>> idct_prosessor (8, vector<int>(8, 0));
-    for (int x = 0; x < 8; x++) {
-        for (int y = 0; y < 8; y++) {
-            double idct_val = 0;
-             for (int i = 0; i < 8; i++) {
-                for (int j = 0; j < 8; j++) {
-                    idct_val += idct_table.at(x).at(i) * idct_table.at(y).at(j) * dct_recon.at(i).at(j);
-                }
-            }
-            switch (picture_coding_type) {
-                case 1:
-                    if ((int)idct_val < 0) {
-                        idct_prosessor.at(x).at(y) = 0;
-                    } else if ((int)idct_val > 255) {
-                        idct_prosessor.at(x).at(y) = 255;
-                    } else {
-                        idct_prosessor.at(x).at(y) = (int)idct_val;
-                    }
-                    break;
-                case 2:
-                case 3:
-                    idct_prosessor.at(x).at(y) = (int)idct_val;
-                    break;
-            }
-        }
-    }
-    dct_recon = idct_prosessor;
-    
-//    cout << endl;
-//    for(int r=0; r<8; r++) {
-//        for (int c=0; c<8; c++) {
-//            cout << dct_recon[r][c] << " ";
-//        }
-//        cout << endl;
-//    }
-    
-    switch (picture_coding_type) {
-        case 1:
-            pic_mb_vec.push_back(dct_recon);
-            break;
-        case 2:
-        case 3:
-            mb_p_num.push_back(mb_address);
-            mp_p_i.push_back(block_i);
-            pic_mb_vec_p.push_back(dct_recon);        
-            break;
-    }
-}
-
 void Decoder::idctrow(int i) {
+    // Get each i row from 2d-vector
     vector<int>blk(8, 0);
     int num = 0;
     for (int r=0; r<8; r++) {
@@ -2305,19 +3562,22 @@ void Decoder::idctrow(int i) {
             }
         }
     }
-    
-    int x0, x1, x2, x3, x4, x5, x6, x7, x8;
-    /* int16_tcut */
-    if (!((x1 = blk[4]<<11) | (x2 = blk[6]) | (x3 = blk[2]) |
-        (x4 = blk[1]) | (x5 = blk[7]) | (x6 = blk[5]) | (x7 = blk[3])))
-    {
-    dct_recon[i][0]=dct_recon[i][1]=dct_recon[i][2]=dct_recon[i][3]=dct_recon[i][4]=dct_recon[i][5]=dct_recon[i][6]=dct_recon[i][7]=blk[0]<<3;
-    return;
+
+    int x0, x8;
+    int x1 = blk[4];
+    int x2 = blk[6];
+    int x3 = blk[2];
+    int x4 = blk[1];
+    int x5 = blk[7];
+    int x6 = blk[5];
+    int x7 = blk[3];
+    if (!((x1<<11) | x2 | x3 | x4 | x5 | x6 | x7 )) {
+        dct_recon[i][0]=dct_recon[i][1]=dct_recon[i][2]=dct_recon[i][3]=dct_recon[i][4]=dct_recon[i][5]=dct_recon[i][6]=dct_recon[i][7]=blk[0]<<3;
+        return;
     }
+    x0 = (blk[0]<<11) + 128;
 
-    x0 = (blk[0]<<11) + 128; /* for proper rounding in the fourth stage */
-
-    /* first stage */
+    // First stage
     x8 = W7*(x4+x5);
     x4 = x8 + (W1-W7)*x4;
     x5 = x8 - (W1+W7)*x5;
@@ -2325,7 +3585,7 @@ void Decoder::idctrow(int i) {
     x6 = x8 - (W3-W5)*x6;
     x7 = x8 - (W3+W5)*x7;
 
-    /* second stage */
+    // second stage
     x8 = x0 + x1;
     x0 -= x1;
     x1 = W6*(x3+x2);
@@ -2336,7 +3596,7 @@ void Decoder::idctrow(int i) {
     x6 = x5 + x7;
     x5 -= x7;
 
-    /* third stage */
+    // third stage
     x7 = x8 + x3;
     x8 -= x3;
     x3 = x0 + x2;
@@ -2344,7 +3604,7 @@ void Decoder::idctrow(int i) {
     x2 = (181*(x4+x5)+128)>>8;
     x4 = (181*(x4-x5)+128)>>8;
 
-    /* fourth stage */
+    // fourth stage : assign value back to dct_recon 2d-vector
     dct_recon[i][0] = (x7+x1)>>8;
     dct_recon[i][1] = (x3+x2)>>8;
     dct_recon[i][2] = (x0+x4)>>8;
@@ -2356,6 +3616,7 @@ void Decoder::idctrow(int i) {
 }
 
 void Decoder::idctcol(int i) {
+    // Get each i col from 2d-vector
     vector<int>blk(8, 0);
     int num = 0;
     for (int r=0; r<8; r++) {
@@ -2365,20 +3626,23 @@ void Decoder::idctcol(int i) {
                 num ++;
             }
         }
-    }    
-    int x0, x1, x2, x3, x4, x5, x6, x7, x8;
-    /* int16_tcut */
-    if (!((x1 = (blk[4]<<8)) | (x2 = blk[6]) | (x3 = blk[2]) |
-        (x4 = blk[1]) | (x5 = blk[7]) | (x6 = blk[5]) | (x7 = blk[3])))
-    {
-    dct_recon[0][i]=dct_recon[1][i]=dct_recon[2][i]=dct_recon[3][i]=dct_recon[4][i]=dct_recon[5][i]=dct_recon[6][i]=dct_recon[7][i]=
-      iclp[(blk[0]+32)>>6];
-    return;
     }
 
+    int x0, x8;
+    int x1 = (blk[4]<<8);
+    int x2 = blk[6];
+    int x3 = blk[2];
+    int x4 = blk[1];
+    int x5 = blk[7];
+    int x6 = blk[5];
+    int x7 = blk[3];
+    if (!(x1 | x2 | x3 | x4 | x5 | x6 | x7)) {
+        dct_recon[0][i]=dct_recon[1][i]=dct_recon[2][i]=dct_recon[3][i]=dct_recon[4][i]=dct_recon[5][i]=dct_recon[6][i]=dct_recon[7][i]=iclp[(blk[0]+32)>>6];
+        return;
+    }
     x0 = (blk[0]<<8) + 8192;
 
-    /* first stage */
+    // first stage
     x8 = W7*(x4+x5) + 4;
     x4 = (x8+(W1-W7)*x4)>>3;
     x5 = (x8-(W1+W7)*x5)>>3;
@@ -2386,7 +3650,7 @@ void Decoder::idctcol(int i) {
     x6 = (x8-(W3-W5)*x6)>>3;
     x7 = (x8-(W3+W5)*x7)>>3;
     
-    /* second stage */
+    // second stage
     x8 = x0 + x1;
     x0 -= x1;
     x1 = W6*(x3+x2) + 4;
@@ -2397,7 +3661,7 @@ void Decoder::idctcol(int i) {
     x6 = x5 + x7;
     x5 -= x7;
 
-    /* third stage */
+    // third stage
     x7 = x8 + x3;
     x8 -= x3;
     x3 = x0 + x2;
@@ -2405,7 +3669,7 @@ void Decoder::idctcol(int i) {
     x2 = (181*(x4+x5)+128)>>8;
     x4 = (181*(x4-x5)+128)>>8;
 
-    /* fourth stage */
+    // fourth stage : assign value back to dct_recon 2d-vector
     dct_recon[0][i] = iclp[(x7+x1)>>14];
     dct_recon[1][i] = iclp[(x3+x2)>>14];
     dct_recon[2][i] = iclp[(x0+x4)>>14];
@@ -2418,9 +3682,9 @@ void Decoder::idctcol(int i) {
 
 void Decoder::fast_idct() {
     // Reference
-    //      inverse two dimensional DCT, Chen-Wang algorithm
-    //      (cf. IEEE ASSP-32, pp. 803-816, Aug. 1984)
-    //      (https://github.com/keithw/mympeg2enc/blob/master/idct.c#L58)
+    //      Inverse two dimensional DCT, Chen-Wang algorithm
+    //      ( cf. IEEE ASSP-32, pp. 803-816, Aug. 1984 )
+    //      ( https://github.com/keithw/mympeg2enc/blob/master/idct.c#L58 )
     int i;
     for (i=0; i<8; i++) {
         idctrow(i);
@@ -2430,255 +3694,33 @@ void Decoder::fast_idct() {
     }
     switch (picture_coding_type) {
         case 1:
-            pic_mb_vec.push_back(dct_recon);
+            for (int i=0; i<8; i++) {
+                for (int j=0; j<8; j++) {
+                    if (dct_recon[i][j] < 0) {
+                        dct_recon.at(i).at(j) = 0;
+                    } else if (dct_recon[i][j] > 255) {
+                        dct_recon.at(i).at(j) = 255;
+                    }
+                }
+            }
             break;
         case 2:
         case 3:
-            mb_p_num.push_back(mb_address);
-            mp_p_i.push_back(block_i);
-            pic_mb_vec_p.push_back(dct_recon);        
             break;
     }
+    collect_mbs();
 }
 
-void Decoder::recon_pic() {
-    vector<vector<int>>y_result (v_size, vector<int>(h_size, 0));
-    vector<vector<int>>cb_result (v_size / 2, vector<int>(h_size / 2, 0));
-    vector<vector<int>>cr_result (v_size / 2, vector<int>(h_size / 2, 0));
-    if (picture_coding_type == 1) {
-        int y01_r = 0;
-        int y01_c = 0;
-        int y23_r = 8;
-        int y23_c = 0;
-        int cb_r = 0;
-        int cb_c = 0;
-        int cr_r = 0;
-        int cr_c = 0;
-        // counter
-        int y01_acc = 0;
-        int y23_acc = 0;
-        int cb_acc = 0;
-        int cr_acc = 0;
-        int mb_num = pic_mb_vec.size();
-        for (int i=0; i<mb_num; i++) {
-            if ((((i + 1) % 6) >= 1) && (((i + 1) % 6) <= 2)) {
-                // Y0, Y1
-                for (int r=0; r<8; r++) {
-                    for (int c=0; c<8; c++) {
-                        y_result.at(y01_r + r).at(y01_c + c) = pic_mb_vec.at(i).at(r).at(c);
-                    }
-                }
-                // update row & col
-                if ((y01_acc + 1) % (mb_width * 2) == 0) {
-                    y01_r += 16;
-                    y01_c = 0;
-                } else {
-                    y01_c += 8;
-                }
-                // update counter
-                y01_acc += 1;
-            } else if ((((i + 1) % 6) >= 3) && (((i + 1) % 6) <= 4)) {
-                // Y2, Y3
-                for (int r=0; r<8; r++) {
-                    for (int c=0; c<8; c++) {
-                        y_result.at(y23_r + r).at(y23_c + c) = pic_mb_vec.at(i).at(r).at(c);
-                    }
-                }
-                // update row & col
-                if ((y23_acc + 1) % (mb_width * 2) == 0) {
-                    y23_r += 16;
-                    y23_c = 0;
-                } else {
-                    y23_c += 8;
-                }
-                // update counter
-                y23_acc += 1;
-            } else if (((i + 1) % 6) == 5) {
-                // Cb
-                for (int r=0; r<8; r++) {
-                    for (int c=0; c<8; c++) {
-                        cb_result.at(cb_r + r).at(cb_c + c) = pic_mb_vec.at(i).at(r).at(c);
-                    }
-                }
-                // update row & col
-                if ((cb_acc + 1) % mb_width == 0) {
-                    cb_r += 8;
-                    cb_c = 0;
-                } else {
-                    cb_c += 8;
-                }
-               // update counter
-                cb_acc += 1;
-            } else if (((i + 1) % 6) == 0) {
-                // Cr
-                for (int r=0; r<8; r++) {
-                    for (int c=0; c<8; c++) {
-                        cr_result.at(cr_r + r).at(cr_c + c) = pic_mb_vec.at(i).at(r).at(c);
-                    }
-                }
-                // update row & col
-                if ((cr_acc + 1) % mb_width == 0) {
-                    cr_r += 8;
-                    cr_c = 0;
-                } else {
-                    cr_c += 8;
-                }
-               // update counter
-                cr_acc += 1;
-            }
-        }
-        y_result_final = y_result;
-        cb_result_final = cb_result;
-        cr_result_final = cr_result;
-        // reset
-        pic_mb_vec = {};
-    } else {
-        for (int i=0; i<pic_mb_vec_p.size(); i++) {
-            int mb_num = mb_p_num.at(i);
-            int b_i = mp_p_i.at(i);
-            // int y_r = (mb_num / mb_width) * 16;
-            int y_r = (mb_num / mb_width) << 4;
-            // int y_c = (mb_num % mb_width) * 16;
-            int y_c = (mb_num % mb_width) << 4;
-            // int c_r = (mb_num / mb_width) * 8;
-            int c_r = (mb_num / mb_width) << 3;
-            // int c_c = (mb_num % mb_width) * 8;
-            int c_c = (mb_num % mb_width) << 3;
-            switch (b_i) {
-                case 0:
-                    for (int r=0; r<8; r++) {
-                        for (int c=0; c<8; c++) {
-                            y_result.at(y_r + r).at(y_c + c) = pic_mb_vec_p.at(i).at(r).at(c);
-                        }
-                    }
-                    break;
-                case 1:
-                    for (int r=0; r<8; r++) {
-                        for (int c=0; c<8; c++) {
-                            y_result.at(y_r + r).at(y_c + 8 + c) = pic_mb_vec_p.at(i).at(r).at(c);                         
-                        }
-                    }                
-                    break;
-                case 2:
-                    for (int r=0; r<8; r++) {
-                        for (int c=0; c<8; c++) {
-                            y_result.at(y_r + 8 + r).at(y_c + c) = pic_mb_vec_p.at(i).at(r).at(c);                  
-                        }
-                    }
-                    break;
-                case 3:
-                    for (int r=0; r<8; r++) {
-                        for (int c=0; c<8; c++) {
-                            y_result.at(y_r + 8 + r).at(y_c + 8 + c) = pic_mb_vec_p.at(i).at(r).at(c);               
-                        }
-                    }
-                    break;
-                case 4:              
-                    for (int r=0; r<8; r++) {
-                        for (int c=0; c<8; c++) {
-                            cb_result.at(c_r + r).at(c_c + c) = pic_mb_vec_p.at(i).at(r).at(c);                              
-                        }
-                    }
-                    break;
-                case 5:               
-                    for (int r=0; r<8; r++) {
-                        for (int c=0; c<8; c++) {
-                            cr_result.at(c_r + r).at(c_c + c) = pic_mb_vec_p.at(i).at(r).at(c);                             
-                        }
-                    }
-                    break;
-            }
-        }
-        // update result to result all
-        y_result_final = y_result;
-        cb_result_final = cb_result;
-        cr_result_final = cr_result; 
-        // reset 
-        mb_p_num = {};
-        mp_p_i = {};
-        pic_mb_vec_p = {};
-    }
-}
-
-void Decoder::rgb2cvmat(vector<vector<int>> cv_R, vector<vector<int>> cv_G, vector<vector<int>> cv_B) {
-    Mat image(240, 320, CV_8UC3);
-    for (int r = 0; r< 240; r++)
-    {
-        for (int c = 0; c< 320; c++)
-        {
-            image.at<Vec3b>(r, c)[0] = cv_B.at(r).at(c);
-            image.at<Vec3b>(r, c)[1] = cv_G.at(r).at(c);
-            image.at<Vec3b>(r, c)[2] = cv_R.at(r).at(c);
+void Decoder::rgb2cvmat() {
+    Mat fut_image(240, 320, CV_8UC3);
+    for (int r = 0; r< 240; r++) {
+        for (int c = 0; c< 320; c++) {
+            fut_image.at<Vec3b>(r, c)[0] = pel_future_B[r][c];
+            fut_image.at<Vec3b>(r, c)[1] = pel_future_G[r][c];
+            fut_image.at<Vec3b>(r, c)[2] = pel_future_R[r][c];
         }
     }
-    imageQueue.push_back(image);
-}
-
-void Decoder::ycbcr2rgb(bool to_buffer, bool to_output) {
-    int img_y_w = y_result_final.at(0).size();
-    int img_y_h = y_result_final.size();
-    double R;
-    double G;
-    double B;
-    for (int r = 0; r < v_size; r++) {
-        for (int c = 0; c < h_size; c++) {
-            // For Cb, Cr
-            int c_r = r / 2;
-            int c_c = c / 2;
-            // Get data
-            double Y = y_result_final.at(r).at(c);
-            double Cb = cb_result_final.at(c_r).at(c_c);
-            double Cr = cr_result_final.at(c_r).at(c_c);
-
-            if (mb_intra_vec.at(r).at(c) == "1") {
-                R = Y + (1.402 * (Cr - 128));
-                G = Y - (0.344 * (Cb - 128)) - (0.714 * (Cr - 128));
-                B = Y + (1.772 * (Cb - 128));
-            } else {
-                R = pel_R.at(r).at(c);
-                G = pel_G.at(r).at(c);
-                B = pel_B.at(r).at(c);
-                // R += ((255/219.0) * Y) + ((255/224.0) * 1.402 * Cr);
-                // G += ((255/219.0) * Y) - ((255/224.0) * 1.772 * (0.114/0.587) * Cb) - ((255/224.0) * 1.402 * (0.299/0.587) * Cr);
-                // B += ((255/219.0) * Y) + ((255/224.0) * 1.772 * Cb);
-                R += (1.164 * Y) + (1.596 * Cr);
-                G += (1.164 * Y) - (0.392 * Cb) - (0.813 * Cr);
-                B += (1.164 * Y) + (2.017 * Cb);
-            }
-            // Clip range to 0 - 255
-            if (R < 0) {
-                R = 0;
-            } else if (R > 255) {
-                R = 255;
-            }
-            if (G < 0) {
-                G = 0;
-            } else if (G > 255) {
-                G = 255;
-            }
-            if (B < 0) {
-                B = 0;
-            } else if (B > 255) {
-                B = 255;
-            }
-            // update pel_past
-            pel_tmp_R.at(r).at(c) = (int)R;
-            pel_tmp_G.at(r).at(c) = (int)G;
-            pel_tmp_B.at(r).at(c) = (int)B;
-        }
-    }
-    if (to_buffer) {
-        pel_past_R = pel_tmp_R;
-        pel_past_G = pel_tmp_G;
-        pel_past_B = pel_tmp_B;
-    }
-    if (to_output) {
-//        img_queue.push_back(pel_tmp_R);
-//        img_queue.push_back(pel_tmp_G);
-//        img_queue.push_back(pel_tmp_B);
-        // push to buffer
-        rgb2cvmat(pel_tmp_R, pel_tmp_G, pel_tmp_B);            
-    }
+    imageQueue.push_back(fut_image);
 }
 
 void Decoder::ycbcr2rgb_s(bool to_buffer, bool to_output) {
@@ -2781,6 +3823,112 @@ void Decoder::ycbcr2rgb_s(bool to_buffer, bool to_output) {
     }
 }
 
+void Decoder::collect_mbs() {
+    int y_r = mb_row * 16;
+    int y_c = mb_col * 16;
+    int c_r = mb_row * 8;
+    int c_c = mb_col * 8;
+    switch (block_i) {
+        case 0:
+            for (int r=0; r<8; r++) {
+                for (int c=0; c<8; c++) {
+                    // y_result_final.at(y_r + r).at(y_c + c) = dct_recon.at(r).at(c);
+                    y_tmp.at(r).at(c) = dct_recon.at(r).at(c);
+                }
+            }
+            break;
+        case 1:
+            for (int r=0; r<8; r++) {
+                for (int c=0; c<8; c++) {
+                    // y_result_final.at(y_r + r).at(y_c + 8 + c) = dct_recon.at(r).at(c);
+                    y_tmp.at(r).at(c + 8) = dct_recon.at(r).at(c);
+                }
+            }
+            break;
+        case 2:
+            for (int r=0; r<8; r++) {
+                for (int c=0; c<8; c++) {
+                    // y_result_final.at(y_r + 8 + r).at(y_c + c) = dct_recon.at(r).at(c);
+                    y_tmp.at(r + 8).at(c) = dct_recon.at(r).at(c);
+                }
+            }
+            break;
+        case 3:
+            for (int r=0; r<8; r++) {
+                for (int c=0; c<8; c++) {
+                    // y_result_final.at(y_r + 8 + r).at(y_c + 8 + c) = dct_recon.at(r).at(c);
+                    y_tmp.at(r + 8).at(c + 8) = dct_recon.at(r).at(c);
+                }
+            }
+            break;
+        case 4:
+            for (int r=0; r<8; r++) {
+                for (int c=0; c<8; c++) {
+                    // cb_result_final.at(c_r + r).at(c_c + c) = dct_recon.at(r).at(c);
+                    cb_tmp.at(r).at(c) = dct_recon.at(r).at(c);
+                }
+            }
+            break;
+        case 5:
+            for (int r=0; r<8; r++) {
+                for (int c=0; c<8; c++) {
+                    // cr_result_final.at(c_r + r).at(c_c + c) = dct_recon.at(r).at(c);
+                    cr_tmp.at(r).at(c) = dct_recon.at(r).at(c);
+                }
+            }
+            break;
+    }
+}
+
+void Decoder::recon_image() {
+    int pel_r = mb_row * 16;
+    int pel_c = mb_col * 16;
+    double R;
+    double G;
+    double B;
+    for (int r=0; r<16; r++) {
+        for (int c=0; c<16; c++) {
+            // For Cb, Cr
+            int c_r = r / 2;
+            int c_c = c / 2;
+            double Y = y_tmp.at(r).at(c);
+            double Cb = cb_tmp.at(c_r).at(c_c);
+            double Cr = cr_tmp.at(c_r).at(c_c);
+            if (mb_intra == "1") {
+                R = Y + (1.402 * (Cr - 128));
+                G = Y - (0.344 * (Cb - 128)) - (0.714 * (Cr - 128));
+                B = Y + (1.772 * (Cb - 128));
+            } else {
+                R = pel_R.at(pel_r + r).at(pel_c + c);
+                G = pel_G.at(pel_r + r).at(pel_c + c);
+                B = pel_B.at(pel_r + r).at(pel_c + c);
+                R += (1.164 * Y) + (1.596 * Cr);
+                G += (1.164 * Y) - (0.392 * Cb) - (0.813 * Cr);
+                B += (1.164 * Y) + (2.017 * Cb);
+            }
+            // Clip range to 0 - 255
+            if (R < 0) {
+                R = 0;
+            } else if (R > 255) {
+                R = 255;
+            }
+            if (G < 0) {
+                G = 0;
+            } else if (G > 255) {
+                G = 255;
+            }
+            if (B < 0) {
+                B = 0;
+            } else if (B > 255) {
+                B = 255;
+            }
+            // update pel_past
+            image.at<Vec3b>(pel_r + r, pel_c + c)[0] = (int)B;
+            image.at<Vec3b>(pel_r + r, pel_c + c)[1] = (int)G;
+            image.at<Vec3b>(pel_r + r, pel_c + c)[2] = (int)R;
+        }
+    }
+}
 
 // Reconstruct P-frame
 void Decoder::cal_motion_vector_p() {
@@ -2921,17 +4069,15 @@ void Decoder::decode_mv() {
     int B_for = 0;
     int R_bac = 0;
     int G_bac = 0;
-    int B_bac = 0;    
+    int B_bac = 0;
     // RGB
     for (int i=0; i<16; i++) {
         for (int j=0; j<16; j++) {
             int pel_r = (mb_row * 16) + i;
             int pel_c = (mb_col * 16) + j;
-            mb_intra_vec.at(pel_r).at(pel_c) = "0";
-
             if (mb_motion_forward == "1") {
                 int pel_future_r = pel_r + down_for;
-                int pel_future_c = pel_c + right_for;              
+                int pel_future_c = pel_c + right_for;
                 if ( ! right_half_for && ! down_half_for ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
                     R_for = pel_future_R.at(pel_future_r).at(pel_future_c);
@@ -2956,8 +4102,8 @@ void Decoder::decode_mv() {
             }
             if (mb_motion_backward == "1") {
                 int pel_past_r = pel_r + down_bac;
-                int pel_past_c = pel_c + right_bac;               
-                if ( ! right_half_bac && ! down_half_bac ) {             
+                int pel_past_c = pel_c + right_bac;
+                if ( ! right_half_bac && ! down_half_bac ) {
                     // pel[i][j] = pel_past[i+down_for][j+right_for];
                     R_bac = pel_past_R.at(pel_past_r).at(pel_past_c);
                     G_bac = pel_past_G.at(pel_past_r).at(pel_past_c);
@@ -2967,7 +4113,7 @@ void Decoder::decode_mv() {
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r + 1).at(pel_past_c)) / 2);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r + 1).at(pel_past_c)) / 2);
                     B_bac = round((pel_past_B.at(pel_past_r).at(pel_past_c) + pel_past_B.at(pel_past_r + 1).at(pel_past_c)) / 2);
-                } else if ( right_half_bac && ! down_half_bac ) {       
+                } else if ( right_half_bac && ! down_half_bac ) {
                     // pel[i][j] = ( pel_past[i+down_for][j+right_for] + pel_past[i+down_for][j+right_for+1] ) // 2;
                     R_bac = round((pel_past_R.at(pel_past_r).at(pel_past_c) + pel_past_R.at(pel_past_r).at(pel_past_c + 1)) / 2);
                     G_bac = round((pel_past_G.at(pel_past_r).at(pel_past_c) + pel_past_G.at(pel_past_r).at(pel_past_c + 1)) / 2);
@@ -2991,11 +4137,7 @@ void Decoder::decode_mv() {
                 pel_R.at(pel_r).at(pel_c) = round((R_for + R_bac) / 2);
                 pel_G.at(pel_r).at(pel_c) = round((G_for + G_bac) / 2);
                 pel_B.at(pel_r).at(pel_c) = round((B_for + B_bac) / 2);
-            }            
+            }
         }
     }
 }
-
-
-
-

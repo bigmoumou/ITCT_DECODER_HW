@@ -56,11 +56,6 @@ private:
     uint8_t closed_gop = 0;
     uint8_t broken_link = 0;
     int pic_num = 0;
-    // vector<vector<vector<int>>> img_queue {};
-    int img_q_num = 0;
-    int img_r_queue [240][320];
-    int img_g_queue [240][320];
-    int img_b_queue [240][320];
     
     // Pictures
     uint32_t picture_start_code = 0;
@@ -80,17 +75,16 @@ private:
     uint8_t backward_r_size = 0;
     uint8_t backward_f = 0;    
     // Pars for calculations
-    vector<vector<vector<int>>> pic_mb_vec;
-    vector<int> mb_p_num {};
-    vector<int> mp_p_i {};
-    vector<vector<string>> mb_intra_vec {};
-    vector<vector<vector<int>>> pic_mb_vec_p;
-    vector<vector<vector<int>>> pic_mb_vec_b;
-    vector<vector<int>> y_result_final {};
-    vector<vector<int>> cb_result_final {};
-    vector<vector<int>> cr_result_final {};
+    vector<vector<string>> mb_intra_vec;
+    vector<vector<int>> y_result_final;
+    vector<vector<int>> cb_result_final;
+    vector<vector<int>> cr_result_final;
     // queue for opencv video
     deque<Mat> imageQueue;
+    Mat image;
+    vector<vector<int>> y_tmp;
+    vector<vector<int>> cb_tmp;
+    vector<vector<int>> cr_tmp;
 
     // Slices
     int slice_vertical_position = 0;
@@ -148,7 +142,7 @@ private:
     int motion_vertical_backward_code = 0;
     uint8_t motion_vertical_backward_r = 0;
     int recon_right_bac = 0;
-    int recon_down_bac = 0;    
+    int recon_down_bac = 0;
     // Pars for calculations
     int cbp = 0;
 
@@ -174,9 +168,6 @@ private:
     vector<vector<int>> pel_R;
     vector<vector<int>> pel_G;
     vector<vector<int>> pel_B;
-    vector<vector<int>> pel_tmp_R;
-    vector<vector<int>> pel_tmp_G;
-    vector<vector<int>> pel_tmp_B;
 
     // Utils
     vector<vector<int>> zigzag_m {{0, 1, 5, 6, 14, 15, 27, 28},
@@ -220,12 +211,12 @@ private:
                                                                           {"000000111",31},{"000000110",47},{"000000101",55},{"000000100",59},{"000000011",27},
                                                                           {"000000010",39}};
     // new fast idct
-    int W1 = 2841; /* 2048*sqrt(2)*cos(1*pi/16) */
-    int W2 = 2676; /* 2048*sqrt(2)*cos(2*pi/16) */
-    int W3 = 2408; /* 2048*sqrt(2)*cos(3*pi/16) */
-    int W5 = 1609; /* 2048*sqrt(2)*cos(5*pi/16) */
-    int W6 = 1108; /* 2048*sqrt(2)*cos(6*pi/16) */
-    int W7 = 565;  /* 2048*sqrt(2)*cos(7*pi/16) */
+    int W1 = 2841;
+    int W2 = 2676;
+    int W3 = 2408;
+    int W5 = 1609;
+    int W6 = 1108;
+    int W7 = 565;
     int16_t iclip[1024];
     int16_t *iclp;
 
@@ -253,6 +244,8 @@ public:
     void load_non_intra_quant();
     void print_hex(unsigned int code);
     void print_dec(unsigned int code);
+    void output_img();
+    void output_img_mat();
     // ---> check start & end code
     void next_start_code();
     bool is_next_start_code(int code);
@@ -271,24 +264,26 @@ public:
     int get_escape_run();
     int get_escape_level();
     int get_motion_vector_map();
+    int get_motion_vector_map_s();
 
     // Reconstruct I-frame
     void coded_block_pattern();
     void dct_coeff_first_s();
     void dct_coeff_next_s();
+    void dct_coeff_next_s2();
+    void dct_coeff_next_s3();    
     void fill_dct_zz(int run, int level);
     void fill_dct_zz_first(int run, int level);
     // new fast idct
     void idctrow (int i);
     void idctcol (int i);
     void fast_idct();
+    void collect_mbs();
+    void recon_image();
 
     void reconstruct_dct(int num);
-    void idct();
-    void recon_pic();
-    void ycbcr2rgb(bool to_buffer, bool to_output);
     void ycbcr2rgb_s(bool to_buffer, bool to_output);
-    void rgb2cvmat(vector<vector<int>> cv_R, vector<vector<int>> cv_G, vector<vector<int>> cv_B);
+    void rgb2cvmat();
     // Reconstruct P-frame
     void cal_motion_vector_p();
     void decode_mv();
