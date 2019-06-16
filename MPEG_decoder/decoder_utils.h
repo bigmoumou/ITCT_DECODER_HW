@@ -81,10 +81,12 @@ private:
     vector<vector<int>> cr_result_final;
     // queue for opencv video
     deque<Mat> imageQueue;
+    Mat fut_image;
     Mat image;
-    vector<vector<int>> y_tmp;
-    vector<vector<int>> cb_tmp;
-    vector<vector<int>> cr_tmp;
+    Mat imageQ;
+    int y_tmp[16][16];
+    int cb_tmp[8][8];
+    int cr_tmp[8][8];
 
     // Slices
     int slice_vertical_position = 0;
@@ -165,9 +167,15 @@ private:
     vector<vector<int>> pel_future_R;
     vector<vector<int>> pel_future_G;
     vector<vector<int>> pel_future_B;
-    vector<vector<int>> pel_R;
-    vector<vector<int>> pel_G;
-    vector<vector<int>> pel_B;
+//    int pel_past_R [240][320];
+//    int pel_past_G [240][320];
+//    int pel_past_B [240][320];
+//    int pel_future_R [240][320];
+//    int pel_future_G [240][320];
+//    int pel_future_B [240][320];
+    int pel_R [240][320];
+    int pel_G [240][320];
+    int pel_B [240][320];
 
     // Utils
     vector<vector<int>> zigzag_m {{0, 1, 5, 6, 14, 15, 27, 28},
@@ -237,7 +245,7 @@ public:
     void macroblock();
     
     void block(int i);
-       
+    
     // Utils
     int sign(int num);
     void load_intra_quant();
@@ -255,7 +263,7 @@ public:
     // ----> other layers
     int get_cur_pos(int cur_pos, int num);
     void update_pattern_code(vector<int> & pattern_code);
-    
+
     // Get Mapping Value
     int get_mb_address_map_s();
     string get_mb_type_map();
@@ -265,13 +273,13 @@ public:
     int get_escape_level();
     int get_motion_vector_map();
     int get_motion_vector_map_s();
+    void pel_past_2_future();
 
     // Reconstruct I-frame
     void coded_block_pattern();
     void dct_coeff_first_s();
     void dct_coeff_next_s();
-    void dct_coeff_next_s2();
-    void dct_coeff_next_s3();    
+    void dct_coeff_next_s3();
     void fill_dct_zz(int run, int level);
     void fill_dct_zz_first(int run, int level);
     // new fast idct
@@ -279,14 +287,16 @@ public:
     void idctcol (int i);
     void fast_idct();
     void collect_mbs();
-    void recon_image();
+    void recon_image_s();
+    void recon_image_skip_p();
+    void recon_image_skip_b();
 
     void reconstruct_dct(int num);
-    void ycbcr2rgb_s(bool to_buffer, bool to_output);
     void rgb2cvmat();
     // Reconstruct P-frame
     void cal_motion_vector_p();
-    void decode_mv();
+    void decode_mv_s();
+    void decode_mv_s_a();
     // Reconstruct B-frame
     void cal_motion_vector_b();
 
