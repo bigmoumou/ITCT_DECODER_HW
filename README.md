@@ -28,3 +28,7 @@ For example :
 ```
 output.exe IPB_ALL.M1V
 ```
+## Performance
+- I_ONLY.M1V 3.8s in avg.
+- IP_ONLY.M1V 3.6s in avg.
+- IPB_ALL.M1V 3.2 in avg.
