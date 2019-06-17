@@ -1,6 +1,7 @@
 # ITCT_Decoder_HW
 
 # JPEG :
+TODO...
 
 # Realtime MPEG-1 Decoder :
 Decode I_ONLY, IP_ONLY, and IPB_ALL.M1V and dispaly image sequence via opencv highgui. (opencv 2.4.13.6).
