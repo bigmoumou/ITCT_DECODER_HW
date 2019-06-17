@@ -156,10 +156,9 @@ private:
     vector<int> dct_zz;
     int dct_zz_i = 0;
     uint8_t end_of_block = 0;
-    vector<vector<int>> dct_recon;
+    // vector<vector<int>> dct_recon;
+    int dct_recon[8][8];
 
-    // Fast IDCT
-    vector<vector <double>> idct_table;
     // pel_past
     vector<vector<int>> pel_past_R;
     vector<vector<int>> pel_past_G;
@@ -185,19 +184,7 @@ private:
                                                                                 {"00010", "11010"}, {"00001", "10010"}, {"000001", "10001"}};
     map<string, string> mb_type_b_map = {{"10", "01100"}, {"11", "01110"}, {"010", "00100"}, {"011", "00110"},
                                                                                 {"0010", "01000"}, {"0011", "01010"}, {"00011", "00001"}, {"00010", "11110"},
-                                                                                {"000011", "11010"}, {"000010", "10110"}, {"000001", "10001"}};                                    
-    // Motion Vectors
-    map<string, int> motion_vector_map = {{"00000011001", -16}, {"00000011011", -15}, {"00000011101", -14},
-                                                                                {"00000011111", -13}, {"00000100001", -12}, {"00000100011", -11},
-                                                                                {"0000010011", -10}, {"0000010101", -9}, {"0000010111", -8},
-                                                                                {"00000111", -7}, {"00001001", -6}, {"00001011", -5},
-                                                                                {"0000111", -4}, {"00011", -3}, {"0011", -2}, {"011", -1},
-                                                                                {"1", 0},
-                                                                                {"010", 1}, {"0010", 2}, {"00010", 3}, {"0000110", 4}, {"00001010", 5},
-                                                                                {"00001000", 6}, {"00000110", 7}, {"0000010110", 8}, {"0000010100", 9},
-                                                                                {"0000010010", 10}, {"00000100010", 11}, {"00000100000", 12},
-                                                                                {"00000011110", 13}, {"00000011100", 14},
-                                                                                {"00000011010", 15}, {"00000011000", 16}};
+                                                                                {"000011", "11010"}, {"000010", "10110"}, {"000001", "10001"}};
     // Macroblock Pattern
    map<string, int> mb_pattern_map = {{"111", 60}, {"1101", 4}, {"1100", 8}, {"1011", 16}, {"1010", 32},
                                                                           {"10011", 12}, {"10010", 48}, {"10001", 20}, {"10000", 40}, {"01111", 28},
@@ -245,14 +232,11 @@ public:
     void load_intra_quant();
     void load_non_intra_quant();
     void output_img();
-    void output_img_mat();
-    // ---> check start & end code
     void next_start_code();
     bool is_next_start_code(int code);
     bool is_next_slice_code();
     uint32_t nextbits(int num);
     uint32_t read_bits(int num);
-    // ----> other layers
     int get_cur_pos(int cur_pos, int num);
     void update_pattern_code(vector<int> & pattern_code);
 
@@ -263,7 +247,6 @@ public:
     int get_dct_dc_size_chr_map_s();
     int get_escape_run();
     int get_escape_level();
-    int get_motion_vector_map();
     int get_motion_vector_map_s();
     void pel_past_2_future();
 

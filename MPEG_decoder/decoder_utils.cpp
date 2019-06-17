@@ -11,7 +11,7 @@
 #include <algorithm>
 #define PI 3.14159265
 
-#include "easyBMP/EasyBMP.h"
+// #include "easyBMP/EasyBMP.h"
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -20,7 +20,7 @@ using namespace cv;
 
 // Init Decoder
 Decoder::Decoder() : 
-    dct_zz(64, 0), pattern_code(6, 0), dct_recon(8, vector<int>(8, 0)),
+    dct_zz(64, 0), pattern_code(6, 0),
     pel_past_R(vector<vector<int>>(240, vector<int>(320, 0))),
     pel_past_G(vector<vector<int>>(240, vector<int>(320, 0))),
     pel_past_B(vector<vector<int>>(240, vector<int>(320, 0))),
@@ -44,6 +44,7 @@ void Decoder::read_data(string filename) {
         cout << "File not found !" << endl;
         exit(1);
     }
+    // read file into buffer
     que_buf = {istreambuf_iterator<char>{f}, {}};
 }
 
@@ -88,14 +89,11 @@ void Decoder::sequence_header() {
 }
 
 void Decoder::group_of_pictures() {
-    // pic_num = 0;
     gop_start_code = read_bits(32);
     time_code = read_bits(25);
     closed_gop = read_bits(1);
     broken_link = read_bits(1);
-    
     next_start_code();
-    
     if ((zero_byte_flag == true) && (zero_byte == 0)) {
         // Picture start code '00000100'
         buf = 0;
@@ -108,7 +106,6 @@ void Decoder::group_of_pictures() {
 }
 
 void Decoder::picture() {
-    // init y, cb, cr final
     pic_num += 1;
     picture_start_code = read_bits(32);
     temporal_reference = read_bits(10);
@@ -125,7 +122,7 @@ void Decoder::picture() {
     if (picture_coding_type == 3) {
         full_pel_backward_vector = read_bits(1);
         backward_f_code = read_bits(3);
-        // decode forward_f_code
+        // decode backward_f_code
         backward_r_size = backward_f_code - 1;
         backward_f = 1 << backward_r_size;
     }
@@ -137,9 +134,6 @@ void Decoder::picture() {
 
     if (picture_coding_type != 3) {
         pel_past_2_future();
-//        pel_future_R = pel_past_R;
-//        pel_future_G = pel_past_G;
-//        pel_future_B = pel_past_B;
     }
     next_start_code();
     if (is_next_slice_code()) {
@@ -413,42 +407,24 @@ void Decoder::load_non_intra_quant() {
 }
 
 void Decoder::output_img() {
-    // Declare output img class
-    BMP Bmp_image;
-    Bmp_image.SetSize(320, 240);
-    for (int r = 0; r < 240; r++) {
-        for (int c = 0; c < 320; c++) {
-            Bmp_image (c, r) -> Red = imageQueue.at(0).at<Vec3b>(r, c)[2];
-            Bmp_image (c, r) -> Green = imageQueue.at(0).at<Vec3b>(r, c)[1];
-            Bmp_image (c, r) -> Blue = imageQueue.at(0).at<Vec3b>(r, c)[0];
-            Bmp_image (c, r) -> Alpha = 0;
-        }
-    }
-    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_S\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
-    Bmp_image.WriteToFile(wfilename.c_str());
-}
-
-void Decoder::output_img_mat() {
-    // Declare output img class
-    BMP Bmp_image;
-    Bmp_image.SetSize(320, 240);
-    for (int r = 0; r < 240; r++) {
-        for (int c = 0; c < 320; c++) {
-            Bmp_image (c, r) -> Red = image.at<Vec3b>(r, c)[2];
-            Bmp_image (c, r) -> Green = image.at<Vec3b>(r, c)[1];
-            Bmp_image (c, r) -> Blue = image.at<Vec3b>(r, c)[0];
-            Bmp_image (c, r) -> Alpha = 0;
-        }
-    }
-    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_S\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
-    Bmp_image.WriteToFile(wfilename.c_str());
+//    BMP Bmp_image;
+//    Bmp_image.SetSize(320, 240);
+//    for (int r = 0; r < 240; r++) {
+//        for (int c = 0; c < 320; c++) {
+//            Bmp_image (c, r) -> Red = imageQueue.at(0).at<Vec3b>(r, c)[2];
+//            Bmp_image (c, r) -> Green = imageQueue.at(0).at<Vec3b>(r, c)[1];
+//            Bmp_image (c, r) -> Blue = imageQueue.at(0).at<Vec3b>(r, c)[0];
+//            Bmp_image (c, r) -> Alpha = 0;
+//        }
+//    }
+//    string wfilename = "C:\\Users\\o1r2g\\OneDrive\\Desktop\\cpp_tutorial\\CPPWorkspace\\MPEG1_S\\pictures\\MPEG_" + to_string(pic_num) + ".bmp";
+//    Bmp_image.WriteToFile(wfilename.c_str());
 }
 
 // ---> check start & end code
 void Decoder::next_start_code() {
     uint32_t next_buf = 0;
     for (int i=0; i<4; i++) {
-        // next_buf = (next_buf << 8) + (que_buf.at(i));
         next_buf = (next_buf << 8) + (que_buf[i]);
     }
     if ((next_buf >> 8) == 0x1) {
@@ -496,7 +472,6 @@ uint32_t Decoder::nextbits(int num) {
         total_rem = 0;
         if (buf_cursor == 0) {
             // update buffer
-            // uint8_t tmp_buf = que_buf.at(i);
             uint8_t tmp_buf = que_buf[i];
             i += 1;
             bit32 = (bit32 << num) + (tmp_buf >> (8 - num));
@@ -509,7 +484,6 @@ uint32_t Decoder::nextbits(int num) {
             // update total_rem
             total_rem -= 8;                    
             // read 8-bit * 1
-            // bit32 = (bit32 << 8) + que_buf.at(i);
             bit32 = (bit32 << 8) + que_buf[i];
             i += 1;
         } else {
@@ -527,13 +501,11 @@ uint32_t Decoder::nextbits(int num) {
         // update total_rem
         total_rem -= 8;
         // read 8-bit * N
-        // bit32 = (bit32 << 8) + que_buf.at(i);
         bit32 = (bit32 << 8) + que_buf[i];
     }
     // Last
     if (total_rem > 0) {
         // update buffer
-        // uint8_t tmp_buf = que_buf.at(i);
         uint8_t tmp_buf = que_buf[i];
         bit32 = (bit32 << total_rem) + (tmp_buf >> (8 - total_rem));
     }
@@ -551,7 +523,6 @@ uint32_t Decoder::read_bits(int num) {
         total_rem = 0;        
         if (buf_cursor == 0) {
             // update buffer
-            // buf = que_buf.at(0);
             buf = que_buf[0];
             bit32 = (bit32 << num) + (buf >> (8 - num));
             que_buf.pop_front();
@@ -564,7 +535,6 @@ uint32_t Decoder::read_bits(int num) {
             // update total_rem
             total_rem -= 8;
             // read 8-bit * 1
-            // bit32 = (bit32 << 8) + que_buf.at(0);
             bit32 = (bit32 << 8) + que_buf[0];
             que_buf.pop_front();
         } else {
@@ -582,14 +552,12 @@ uint32_t Decoder::read_bits(int num) {
         // update total_rem
         total_rem -= 8;
         // read 8-bit * N
-        // bit32 = (bit32 << 8) + que_buf.at(0);
         bit32 = (bit32 << 8) + que_buf[0];
         que_buf.pop_front();
     }
     // Last
     if (total_rem > 0) {
         // update buffer
-        // buf = que_buf.at(0);
         buf = que_buf[0];
         bit32 = (bit32 << total_rem) + (buf >> (8 - total_rem));
         que_buf.pop_front();
@@ -924,20 +892,6 @@ int Decoder::get_dct_dc_size_chr_map_s() {
     }
 }
 
-int Decoder::get_motion_vector_map() {
-    uint16_t nbs11 = nextbits(11);
-    for (int i=1; i<12; i++) {
-        string s = bitset<11>(nbs11).to_string();
-        s = s.substr(0, i);
-        map<string, int>::iterator iter;
-        iter = motion_vector_map.find(s);
-        if (iter !=motion_vector_map.end()) {
-            uint8_t _ = read_bits(i);
-            return iter->second;
-        }
-    }
-}
-
 int Decoder::get_motion_vector_map_s() {
     uint16_t nbs16 = 0;
     for (int i=1; i<12; i++) {
@@ -1083,6 +1037,7 @@ int Decoder::get_motion_vector_map_s() {
 }
 
 void Decoder::pel_past_2_future() {
+    // push pel_past_RGB to pel_future_RGB
     for (int r=0; r<240; r++) {
         for (int c=0; c<320; c++) {
             pel_future_R[r][c] = pel_past_R[r][c];
@@ -2414,7 +2369,7 @@ void Decoder::idctrow(int i) {
     for (int r=0; r<8; r++) {
         for (int c=0; c<8; c++) {
             if (r == i) {
-                blk.at(num) = dct_recon.at(r).at(c);
+                blk.at(num) = dct_recon[r][c];
                 num++;
             }
         }
@@ -2479,7 +2434,7 @@ void Decoder::idctcol(int i) {
     for (int r=0; r<8; r++) {
         for (int c=0; c<8; c++) {
             if (c == i) {
-                blk.at(num) = dct_recon.at(r).at(c);
+                blk.at(num) = dct_recon[r][c];
                 num ++;
             }
         }
