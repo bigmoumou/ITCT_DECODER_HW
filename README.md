@@ -1,11 +1,27 @@
 # ITCT_Decoder_HW
 
-# JPEG
+# JPEG :
 
-# MPEG-1 Decoder
-Decode I_ONLY, IP_ONLY, and IPB_ALL.M1V from videos to bmp images. (output by easyBMP)    
-Dispaly images sequence via opencv highgui. (opencv 2.4.13.6)
+# Realtime MPEG-1 Decoder :
+Decode I_ONLY, IP_ONLY, and IPB_ALL.M1V and dispaly image sequence via opencv highgui. (opencv 2.4.13.6).
+## Enviroment :
+- mingw32
+- g++ 8.2.0
+- opencv-2.4.13.6
+## How to compile :
+Using easpEMP to output image sequence :
 ```
 g++ -IC:\\opencv\\build\\install\\include -LC:\\opencv\\build\\install\\x86\\mingw\\lib -g -o output.exe main.cpp decoder_utils.cpp ./easyBMP/EasyBMP.cpp -lopencv_core2413 -lopencv_highgui2413 -lopencv_imgproc2413
-mpeg.exe > out.txt
+```
+Only using opencv highgui to display :
+```
+g++ -IC:\\opencv\\build\\install\\include -LC:\\opencv\\build\\install\\x86\\mingw\\lib -g -o output.exe main.cpp decoder_utils.cpp -lopencv_core2413 -lopencv_highgui2413 -lopencv_imgproc2413
+```
+## How to execute :
+```
+output.exe <filename.M1V>
+```
+For example :
+```
+output.exe IPB_ALL.M1V
 ```
